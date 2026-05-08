@@ -9,9 +9,10 @@ import json
 VENDOR_ID = 0xCAFE
 PRODUCT_ID = 0xBAF3
 
-CONFIG_VERSION = 4
-CONFIG_SIZE = 32
+CONFIG_VERSION = 6
+CONFIG_SIZE = 64
 REPORT_ID_CONFIG = 100
+MOUSE_CONFIG_SCALE = 65536
 
 SET_CONFIG = 2
 CLEAR_MAPPING = 4
@@ -24,52 +25,75 @@ SET_SCREEN = 12
 UNMAPPED_PASSTHROUGH_FLAG = 0x01
 STICKY_FLAG = 0x01
 
-NSCREENS = 2
+DEFAULT_MOUSE_CONFIG = {
+    "tracking_speed": 0.6875,
+    "pointer_resolution": 400.0,
+    "frame_rate": 67.0,
+    "fixed_multiplier": 1.0,
+    "placement_tolerance": 0.5,
+}
 
 
-def check_crc(buf, crc_):
-    if binascii.crc32(buf[1:29]) != crc_:
-        raise Exception("CRC mismatch")
+def fixed16(value):
+    value = round(float(value) * MOUSE_CONFIG_SCALE)
+    return max(0, min(0xFFFFFFFF, value))
 
 
-def add_crc(buf):
-    return buf + struct.pack("<L", binascii.crc32(buf[1:]))
+def mouse_config_payload(config):
+    mouse_config = {**DEFAULT_MOUSE_CONFIG, **(config.get("mouse", {}) or {})}
+    return struct.pack(
+        "<5L",
+        fixed16(mouse_config["tracking_speed"]),
+        fixed16(mouse_config["pointer_resolution"]),
+        fixed16(mouse_config["frame_rate"]),
+        fixed16(mouse_config["fixed_multiplier"]),
+        fixed16(mouse_config["placement_tolerance"]),
+    )
+
+
+def feature_report(command, payload=b""):
+    body = struct.pack("<BB", CONFIG_VERSION, command) + payload
+    if len(body) > CONFIG_SIZE - 4:
+        raise ValueError("feature payload is too large")
+    body += bytes(CONFIG_SIZE - 4 - len(body))
+    return bytes([REPORT_ID_CONFIG]) + body + struct.pack("<L", binascii.crc32(body))
+
+
+def send_command(device, command, payload=b""):
+    device.send_feature_report(feature_report(command, payload))
 
 
 config = json.load(sys.stdin)
 
 device = hid.Device(VENDOR_ID, PRODUCT_ID)
 
-data = struct.pack("<BBB26B", REPORT_ID_CONFIG, CONFIG_VERSION, SUSPEND, *([0] * 26))
-device.send_feature_report(add_crc(data))
+send_command(device, SUSPEND)
 
-version = config.get("version", CONFIG_VERSION)
 partial_scroll_timeout = config.get("partial_scroll_timeout", 1000000)
 unmapped_passthrough = config.get("unmapped_passthrough", True)
 interval_override = config.get("interval_override", 0)
 constraint_mode = config.get("constraint_mode", 0)
 offscreen_sensitivity = config.get("offscreen_sensitivity", 1000)
+cursor_placement_interval_seconds = config.get("cursor_placement_interval_seconds", 0)
 
 flags = UNMAPPED_PASSTHROUGH_FLAG if unmapped_passthrough else 0
 
-data = struct.pack(
-    "<BBBBLBBL15B",
-    REPORT_ID_CONFIG,
-    CONFIG_VERSION,
+send_command(
+    device,
     SET_CONFIG,
-    flags,
-    partial_scroll_timeout,
-    interval_override,
-    constraint_mode,
-    offscreen_sensitivity,
-    *([0] * 15)
+    struct.pack(
+        "<BLBBLL",
+        flags,
+        partial_scroll_timeout,
+        interval_override,
+        constraint_mode,
+        offscreen_sensitivity,
+        cursor_placement_interval_seconds,
+    )
+    + mouse_config_payload(config),
 )
-device.send_feature_report(add_crc(data))
 
-data = struct.pack(
-    "<BBB26B", REPORT_ID_CONFIG, CONFIG_VERSION, CLEAR_MAPPING, *([0] * 26)
-)
-device.send_feature_report(add_crc(data))
+send_command(device, CLEAR_MAPPING)
 
 for mapping in config.get("mappings", []):
     target_usage = int(mapping["target_usage"], 16)
@@ -77,40 +101,26 @@ for mapping in config.get("mappings", []):
     scaling = mapping.get("scaling", 1000)
     layer = mapping.get("layer", 0)
     flags = STICKY_FLAG if mapping.get("sticky", False) else 0
-    data = struct.pack(
-        "<BBBLLlBB12B",
-        REPORT_ID_CONFIG,
-        CONFIG_VERSION,
+    send_command(
+        device,
         ADD_MAPPING,
-        target_usage,
-        source_usage,
-        scaling,
-        layer,
-        flags,
-        *([0] * 12)
+        struct.pack("<LLlBB", target_usage, source_usage, scaling, layer, flags),
     )
-    device.send_feature_report(add_crc(data))
 
 for i, screen in enumerate(config.get("screens", [])):
-    data = struct.pack(
-        "<BBBBLLLLL5B",
-        REPORT_ID_CONFIG,
-        CONFIG_VERSION,
+    send_command(
+        device,
         SET_SCREEN,
-        i,
-        screen["x"],
-        screen["y"],
-        screen["w"],
-        screen["h"],
-        screen.get("sensitivity", 1000),
-        *([0] * 5)
+        struct.pack(
+            "<BLLLLL",
+            i,
+            screen["x"],
+            screen["y"],
+            screen["w"],
+            screen["h"],
+            screen.get("sensitivity", 1000),
+        ),
     )
-    device.send_feature_report(add_crc(data))
 
-data = struct.pack(
-    "<BBB26B", REPORT_ID_CONFIG, CONFIG_VERSION, PERSIST_CONFIG, *([0] * 26)
-)
-device.send_feature_report(add_crc(data))
-
-data = struct.pack("<BBB26B", REPORT_ID_CONFIG, CONFIG_VERSION, RESUME, *([0] * 26))
-device.send_feature_report(add_crc(data))
+send_command(device, PERSIST_CONFIG)
+send_command(device, RESUME)

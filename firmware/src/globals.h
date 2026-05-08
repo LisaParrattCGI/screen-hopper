@@ -6,6 +6,7 @@
 
 #include "pico/mutex.h"
 
+#include "macos_pointer_acceleration.h"
 #include "types.h"
 
 extern mutex_t their_usages_mutex;
@@ -26,6 +27,7 @@ extern volatile bool suspended;
 
 extern bool unmapped_passthrough;
 extern uint32_t partial_scroll_timeout;
+extern uint32_t cursor_placement_interval_seconds;
 extern std::vector<mapping_config_t> config_mappings;
 
 extern uint8_t resolution_multiplier;
@@ -33,5 +35,8 @@ extern uint8_t resolution_multiplier;
 extern std::unordered_map<int8_t, screen_def_t> screens;
 
 extern ConstraintMode constraint_mode;
+
+extern macos_pointer_acceleration_settings_t macos_pointer_acceleration;
+extern double macos_placement_tolerance;
 
 #endif

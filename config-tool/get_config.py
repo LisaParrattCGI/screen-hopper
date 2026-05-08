@@ -8,9 +8,10 @@ import json
 VENDOR_ID = 0xCAFE
 PRODUCT_ID = 0xBAF3
 
-CONFIG_VERSION = 4
-CONFIG_SIZE = 32
+CONFIG_VERSION = 6
+CONFIG_SIZE = 64
 REPORT_ID_CONFIG = 100
+MOUSE_CONFIG_SCALE = 65536
 
 GET_CONFIG = 3
 GET_MAPPING = 6
@@ -21,24 +22,36 @@ UNMAPPED_PASSTHROUGH_FLAG = 0x01
 NSCREENS = 2
 
 
-def check_crc(buf, crc_):
-    if binascii.crc32(buf[1:29]) != crc_:
+def from_fixed16(value):
+    return value / MOUSE_CONFIG_SCALE
+
+
+def feature_report(command, payload=b""):
+    body = struct.pack("<BB", CONFIG_VERSION, command) + payload
+    if len(body) > CONFIG_SIZE - 4:
+        raise ValueError("feature payload is too large")
+    body += bytes(CONFIG_SIZE - 4 - len(body))
+    return bytes([REPORT_ID_CONFIG]) + body + struct.pack("<L", binascii.crc32(body))
+
+
+def send_command(device, command, payload=b""):
+    device.send_feature_report(feature_report(command, payload))
+
+
+def read_feature(device):
+    data = bytes(device.get_feature_report(REPORT_ID_CONFIG, CONFIG_SIZE + 1))
+    payload = data[1 : CONFIG_SIZE + 1]
+    if binascii.crc32(payload[:-4]) != struct.unpack_from("<L", payload, CONFIG_SIZE - 4)[0]:
         raise Exception("CRC mismatch")
-
-
-def add_crc(buf):
-    return buf + struct.pack("<L", binascii.crc32(buf[1:]))
+    return payload[:-4]
 
 
 device = hid.Device(VENDOR_ID, PRODUCT_ID)
 
-data = struct.pack("<BBB26B", REPORT_ID_CONFIG, CONFIG_VERSION, GET_CONFIG, *([0] * 26))
-device.send_feature_report(add_crc(data))
-
-data = device.get_feature_report(REPORT_ID_CONFIG, CONFIG_SIZE + 1)
+send_command(device, GET_CONFIG)
+payload = read_feature(device)
 
 (
-    report_id,
     version,
     flags,
     partial_scroll_timeout,
@@ -48,10 +61,16 @@ data = device.get_feature_report(REPORT_ID_CONFIG, CONFIG_SIZE + 1)
     interval_override,
     constraint_mode,
     offscreen_sensitivity,
-    *_,
-    crc,
-) = struct.unpack("<BBBLLLLBBL4BL", data)
-check_crc(data, crc)
+    cursor_placement_interval_seconds,
+    tracking_speed,
+    pointer_resolution,
+    frame_rate,
+    fixed_multiplier,
+    placement_tolerance,
+) = struct.unpack_from("<BBLLLLBBLL5L", payload)
+
+if version != CONFIG_VERSION:
+    raise Exception("Incompatible version")
 
 config = {
     "version": version,
@@ -60,27 +79,22 @@ config = {
     "interval_override": interval_override,
     "constraint_mode": constraint_mode,
     "offscreen_sensitivity": offscreen_sensitivity,
+    "cursor_placement_interval_seconds": cursor_placement_interval_seconds,
+    "mouse": {
+        "tracking_speed": from_fixed16(tracking_speed),
+        "pointer_resolution": from_fixed16(pointer_resolution),
+        "frame_rate": from_fixed16(frame_rate),
+        "fixed_multiplier": from_fixed16(fixed_multiplier),
+        "placement_tolerance": from_fixed16(placement_tolerance),
+    },
     "screens": [],
     "mappings": [],
 }
 
 for i in range(mapping_count):
-    data = struct.pack(
-        "<BBBL22B", REPORT_ID_CONFIG, CONFIG_VERSION, GET_MAPPING, i, *([0] * 22)
-    )
-    device.send_feature_report(add_crc(data))
-    data = device.get_feature_report(REPORT_ID_CONFIG, CONFIG_SIZE + 1)
-    (
-        report_id,
-        target_usage,
-        source_usage,
-        scaling,
-        layer,
-        flags,
-        *_,
-        crc,
-    ) = struct.unpack("<BLLlBB14BL", data)
-    check_crc(data, crc)
+    send_command(device, GET_MAPPING, struct.pack("<L", i))
+    payload = read_feature(device)
+    target_usage, source_usage, scaling, layer, flags = struct.unpack_from("<LLlBB", payload)
     config["mappings"].append(
         {
             "target_usage": "{0:#010x}".format(target_usage),
@@ -92,22 +106,9 @@ for i in range(mapping_count):
     )
 
 for i in range(NSCREENS):
-    data = struct.pack(
-        "<BBBL22B", REPORT_ID_CONFIG, CONFIG_VERSION, GET_SCREEN, i, *([0] * 22)
-    )
-    device.send_feature_report(add_crc(data))
-    data = device.get_feature_report(REPORT_ID_CONFIG, CONFIG_SIZE + 1)
-    (
-        report_id,
-        x,
-        y,
-        w,
-        h,
-        sensitivity,
-        *_,
-        crc,
-    ) = struct.unpack("<BLLLLL8BL", data)
-    check_crc(data, crc)
+    send_command(device, GET_SCREEN, struct.pack("<L", i))
+    payload = read_feature(device)
+    x, y, w, h, sensitivity = struct.unpack_from("<LLLLL", payload)
     config["screens"].append(
         {
             "x": x,

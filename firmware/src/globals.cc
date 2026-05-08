@@ -18,14 +18,23 @@ volatile bool suspended = false;
 
 bool unmapped_passthrough = true;
 uint32_t partial_scroll_timeout = 1000000;
+uint32_t cursor_placement_interval_seconds = 0;
 std::vector<mapping_config_t> config_mappings;
 
 uint8_t resolution_multiplier = 0;
 
 std::unordered_map<int8_t, screen_def_t> screens = {
-    { -1, (screen_def_t){ .sensitivity = 4000 } },
-    { 0, (screen_def_t){ .x = 0, .y = 0, .w = 16000000, .h = 9000000, .sensitivity = 4000 } },
-    { 1, (screen_def_t){ .x = 16000000, .y = 0, .w = 16000000, .h = 9000000, .sensitivity = 4000 } },
+    { -1, (screen_def_t) { .sensitivity = 4000 } },
+    { 0, (screen_def_t) { .x = 0, .y = 0, .w = 16000000, .h = 9000000, .sensitivity = 4000 } },
+    { 1, (screen_def_t) { .x = 16000000, .y = 0, .w = 16000000, .h = 9000000, .sensitivity = 4000 } },
 };
 
 ConstraintMode constraint_mode = ConstraintMode::VISIBLE;
+
+macos_pointer_acceleration_settings_t macos_pointer_acceleration = {
+    .tracking_speed = 0.6875,
+    .pointer_resolution = 400.0,
+    .frame_rate = 67.0,
+    .fixed_multiplier = 1.0,
+};
+double macos_placement_tolerance = 0.5;

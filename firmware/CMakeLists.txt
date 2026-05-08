@@ -18,14 +18,14 @@ add_compile_options(-Wall)
 
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-std=c++17>)
 
-add_executable(screenhopper src/remapper.cc src/remapper_single.cc ${OUR_PIO_USB_PATH}/pio_usb.c ${OUR_PIO_USB_PATH}/usb_crc.c src/crc.cc src/descriptor_parser.cc src/pio_usb_stuff.cc src/tinyusb_stuff.cc src/our_descriptor.cc src/globals.cc src/config.cc src/quirks.cc src/interval_override.cc src/serial.cc)
+add_executable(screenhopper src/remapper.cc src/remapper_single.cc ${OUR_PIO_USB_PATH}/pio_usb.c ${OUR_PIO_USB_PATH}/usb_crc.c src/crc.cc src/descriptor_parser.cc src/pio_usb_stuff.cc src/tinyusb_stuff.cc src/our_descriptor.cc src/macos_pointer_acceleration.cc src/globals.cc src/config.cc src/quirks.cc src/interval_override.cc src/serial.cc)
 
 pico_generate_pio_header(screenhopper ${OUR_PIO_USB_PATH}/usb_tx.pio)
 pico_generate_pio_header(screenhopper ${OUR_PIO_USB_PATH}/usb_rx.pio)
 
 target_include_directories(screenhopper PRIVATE src src/tusb_config_device ${OUR_PIO_USB_PATH})
 
-target_link_libraries(screenhopper pico_stdlib pico_multicore hardware_pio hardware_dma hardware_flash tinyusb_device tinyusb_board)
+target_link_libraries(screenhopper pico_stdlib pico_multicore hardware_pio hardware_dma hardware_flash hardware_clocks tinyusb_device tinyusb_board)
 
 pico_add_extra_outputs(screenhopper)
 
@@ -35,7 +35,7 @@ target_include_directories(forwarder PRIVATE src src/tusb_config_device)
 target_link_libraries(forwarder pico_stdlib tinyusb_device tinyusb_board)
 pico_add_extra_outputs(forwarder)
 
-add_executable(screenhopper_a src/remapper.cc src/remapper_dual_a.cc src/crc.cc src/descriptor_parser.cc src/tinyusb_stuff.cc src/our_descriptor.cc src/globals.cc src/config.cc src/quirks.cc src/interval_override.cc src/serial.cc)
+add_executable(screenhopper_a src/remapper.cc src/remapper_dual_a.cc src/crc.cc src/descriptor_parser.cc src/tinyusb_stuff.cc src/our_descriptor.cc src/macos_pointer_acceleration.cc src/globals.cc src/config.cc src/quirks.cc src/interval_override.cc src/serial.cc)
 target_include_directories(screenhopper_a PRIVATE src src/tusb_config_device)
 target_link_libraries(screenhopper_a pico_stdlib hardware_flash tinyusb_device tinyusb_board)
 pico_add_extra_outputs(screenhopper_a)
