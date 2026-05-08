@@ -17,11 +17,13 @@
 #include "config.h"
 #include "crc.h"
 #include "descriptor_parser.h"
+#include "forwarder_control.h"
 #include "globals.h"
 #include "macos_pointer_acceleration.h"
 #include "our_descriptor.h"
 #include "remapper.h"
 #include "serial.h"
+#include "status_led.h"
 
 #define FORWARDER_UART uart1
 #define FORWARDER_TX_PIN 20
@@ -93,6 +95,7 @@ uint32_t reports_received;
 uint32_t reports_sent;
 uint64_t next_periodic_cursor_placement = 0;
 uint32_t scheduled_cursor_placement_interval_seconds = 0;
+int8_t displayed_active_screen = -2;
 
 int64_t cursor_x = 0;
 int64_t cursor_y = 0;
@@ -222,6 +225,25 @@ void copy_set_to_vector(const std::unordered_set<T>& input, std::vector<T>& outp
     for (T value : input) {
         output.push_back(value);
     }
+}
+
+void send_forwarder_active_status(bool active) {
+    forwarder_control_t msg = {
+        .report_id = FORWARDER_CONTROL_REPORT_ID,
+        .command = FORWARDER_CONTROL_SET_ACTIVE,
+        .value = active ? (uint8_t) 1 : (uint8_t) 0,
+    };
+    serial_write((const uint8_t*) &msg, sizeof(msg), FORWARDER_UART);
+}
+
+void update_active_screen_leds() {
+    if (displayed_active_screen == active_screen) {
+        return;
+    }
+
+    displayed_active_screen = active_screen;
+    status_led_set_red(active_screen == 0);
+    send_forwarder_active_status(active_screen > 0);
 }
 
 bool queue_outgoing_report(int8_t target_screen, uint8_t report_id, const uint8_t* report, bool mergeable) {
@@ -557,12 +579,14 @@ void set_cursor_from_host(const runtime_cursor_t& cursor) {
 
     if (cursor.active_screen >= 0 && cursor.active_screen < NSCREENS) {
         active_screen = cursor.active_screen;
+        update_active_screen_leds();
         return;
     }
 
     int8_t derived_active_screen = -1;
     within_bounds(cursor_x, cursor_y, derived_active_screen);
     active_screen = derived_active_screen;
+    update_active_screen_leds();
 }
 
 void process_mapping(bool auto_repeat) {
@@ -815,6 +839,8 @@ void process_mapping(bool auto_repeat) {
 
     memset(reports[REPORT_ID_MOUSE], 0, report_sizes[REPORT_ID_MOUSE]);
     memset(reports[REPORT_ID_MOUSE_RELATIVE], 0, report_sizes[REPORT_ID_MOUSE_RELATIVE]);
+
+    update_active_screen_leds();
 }
 
 void send_report() {
@@ -826,7 +852,9 @@ void send_report() {
     uint8_t report_id = outgoing_reports[or_head][1];
 
     if (target_screen == 0) {
-        tud_hid_report(report_id, outgoing_reports[or_head] + 2, report_sizes[report_id]);
+        if (tud_hid_report(report_id, outgoing_reports[or_head] + 2, report_sizes[report_id])) {
+            status_led_flash_green();
+        }
     } else {
         serial_write(outgoing_reports[or_head] + 1, report_sizes[report_id] + 1, FORWARDER_UART);
     }
@@ -1001,6 +1029,8 @@ int main() {
     parse_our_descriptor();
     load_config();
     board_init();
+    status_led_init();
+    update_active_screen_leds();
     tusb_init();
 
     tud_sof_isr_set(sof_handler);
@@ -1029,6 +1059,7 @@ int main() {
         }
 
         print_stats();
+        status_led_task();
     }
 
     return 0;
