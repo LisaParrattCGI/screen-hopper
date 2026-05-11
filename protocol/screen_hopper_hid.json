@@ -5,8 +5,8 @@
   },
   "config_version": 6,
   "report_sizes": {
-    "config": 64,
-    "runtime": 64
+    "config": 60,
+    "runtime": 60
   },
   "report_ids": {
     "mouse_absolute": 1,

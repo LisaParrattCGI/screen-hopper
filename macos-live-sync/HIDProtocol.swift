@@ -3,9 +3,9 @@ import Foundation
 let vendorID = 0xCAFE
 let productID = 0xBAF3
 let configVersion: UInt8 = 6
-let configSize = 64
+let configSize = 60
 let configReportID: CFIndex = 100
-let runtimeSize = 64
+let runtimeSize = 60
 let runtimeReportID: CFIndex = 101
 let configUsagePage = 0xFF00
 let configUsage = 0x20
