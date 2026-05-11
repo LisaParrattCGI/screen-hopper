@@ -15,6 +15,7 @@ from hid_protocol import (
     REPORT_ID_CONFIG,
     VENDOR_ID,
     open_config_device,
+    read_feature_payload,
 )
 
 
@@ -31,8 +32,7 @@ def send_command(device, command, payload=b""):
 
 
 def read_feature(device):
-    data = bytes(device.get_feature_report(REPORT_ID_CONFIG, CONFIG_SIZE + 1))
-    payload = data[1 : CONFIG_SIZE + 1]
+    payload = read_feature_payload(device, REPORT_ID_CONFIG, CONFIG_SIZE, "config")
     if binascii.crc32(payload[:-4]) != struct.unpack_from("<L", payload, CONFIG_SIZE - 4)[0]:
         raise Exception("CRC mismatch")
     return payload[:-4]
