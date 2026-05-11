@@ -2,37 +2,7 @@ import AppKit
 import CoreGraphics
 import Foundation
 import IOKit.hid
-
-private let vendorID = 0xCAFE
-private let productID = 0xBAF3
-private let configVersion: UInt8 = 6
-private let configSize = 64
-private let configReportID: CFIndex = 100
-private let runtimeSize = 64
-private let runtimeReportID: CFIndex = 101
-private let fixed16Scale = 65536.0
-private let screenCount = 2
-private let unmappedPassthroughFlag: UInt8 = 0x01
-private let stickyMappingFlag: UInt8 = 0x01
-
-private enum ConfigCommand: UInt8 {
-    case setConfig = 2
-    case getConfig = 3
-    case clearMapping = 4
-    case addMapping = 5
-    case getMapping = 6
-    case persistConfig = 7
-    case suspend = 10
-    case resume = 11
-    case setScreen = 12
-    case getScreen = 13
-}
-
-private enum RuntimeCommand: UInt8 {
-    case getStatus = 1
-    case setHostCursor = 2
-    case setMouseConfig = 3
-}
+import ServiceManagement
 
 private enum FeatureReportMode {
     case bodyOnly
@@ -669,6 +639,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
 
     private var originalConfig: PersistentConfig?
     private var workingConfig: PersistentConfig?
+    private var isBusy = false
 
     private let statusLabel = NSTextField(labelWithString: "Fetching configuration...")
     private let saveButton = NSButton(title: "Save", target: nil, action: nil)
@@ -1075,7 +1046,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         populateScreenFields(config.screens)
         layoutView.screens = config.screens
         layoutView.selectedIndex = 0
-        saveButton.isEnabled = true
+        updateSaveState()
     }
 
     private func populateScreenFields(_ screens: [ScreenConfig]) {
@@ -1113,8 +1084,8 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
                 ScreenConfig(
                     x: uint32Value(fieldSet.x),
                     y: uint32Value(fieldSet.y),
-                    width: max(1, uint32Value(fieldSet.width)),
-                    height: max(1, uint32Value(fieldSet.height)),
+                    width: uint32Value(fieldSet.width),
+                    height: uint32Value(fieldSet.height),
                     sensitivity: clampedUInt32(Int64((doubleValue(fieldSet.sensitivity) * 1000.0).rounded()))
                 )
             )
@@ -1146,6 +1117,12 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             return
         }
 
+        if let validationMessage = validationMessage(for: config) {
+            statusLabel.stringValue = validationMessage
+            updateSaveState()
+            return
+        }
+
         setLoading(true, message: "Saving configuration...")
         DispatchQueue.global(qos: .userInitiated).async {
             do {
@@ -1168,16 +1145,118 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
     }
 
     private func setLoading(_ loading: Bool, message: String) {
+        isBusy = loading
         statusLabel.stringValue = message
-        saveButton.isEnabled = !loading && workingConfig != nil
         discardButton.isEnabled = !loading
+        updateSaveState()
     }
 
     private func markDirty() {
         guard let originalConfig, let workingConfig else {
             return
         }
-        statusLabel.stringValue = workingConfig == originalConfig ? "No changes." : "Unsaved changes."
+        if let validationMessage = validationMessage(for: workingConfig) {
+            statusLabel.stringValue = validationMessage
+        } else {
+            statusLabel.stringValue = workingConfig == originalConfig ? "No changes." : "Unsaved changes."
+        }
+        updateSaveState()
+    }
+
+    private func updateSaveState() {
+        guard let originalConfig, let workingConfig, !isBusy else {
+            saveButton.isEnabled = false
+            return
+        }
+
+        saveButton.isEnabled = workingConfig != originalConfig && validationMessage(for: workingConfig) == nil
+    }
+
+    private func validationMessage(for config: PersistentConfig) -> String? {
+        if let fieldName = firstInvalidNumberFieldName() {
+            return "\(fieldName) must be a valid number."
+        }
+
+        guard config.screens.count == screenCount else {
+            return "Expected \(screenCount) screen definitions."
+        }
+
+        if config.partialScrollTimeout == 0 {
+            return "Partial scroll timeout must be greater than zero."
+        }
+        if config.constraintMode > 2 {
+            return "Cursor constraint must be None, Box, or Visible."
+        }
+        if config.offscreenSensitivity == 0 {
+            return "Offscreen sensitivity must be greater than zero."
+        }
+
+        for (index, screen) in config.screens.enumerated() {
+            if screen.width == 0 || screen.height == 0 {
+                return "Screen \(index) width and height must be greater than zero."
+            }
+            if screen.sensitivity == 0 {
+                return "Screen \(index) sensitivity must be greater than zero."
+            }
+        }
+
+        if config.mouse.trackingSpeed < 0 || !config.mouse.trackingSpeed.isFinite {
+            return "Tracking speed must be zero or greater."
+        }
+        if config.mouse.pointerResolution <= 0 || !config.mouse.pointerResolution.isFinite {
+            return "Pointer resolution must be greater than zero."
+        }
+        if config.mouse.frameRate <= 0 || !config.mouse.frameRate.isFinite {
+            return "Frame rate must be greater than zero."
+        }
+        if config.mouse.fixedMultiplier <= 0 || !config.mouse.fixedMultiplier.isFinite {
+            return "Fixed multiplier must be greater than zero."
+        }
+        if config.mouse.placementTolerance < 0 || !config.mouse.placementTolerance.isFinite {
+            return "Placement tolerance must be zero or greater."
+        }
+
+        return nil
+    }
+
+    private func firstInvalidNumberFieldName() -> String? {
+        let fields: [(String, NSTextField)] = [
+            ("Partial scroll timeout", partialScrollField),
+            ("Interval override", intervalOverrideField),
+            ("Offscreen sensitivity", offscreenSensitivityField),
+            ("Placement refresh", cursorPlacementField),
+            ("Tracking speed", trackingSpeedField),
+            ("Pointer resolution", pointerResolutionField),
+            ("Frame rate", frameRateField),
+            ("Fixed multiplier", fixedMultiplierField),
+            ("Placement tolerance", placementToleranceField),
+        ]
+
+        for (name, field) in fields where parsedFiniteDouble(field) == nil {
+            return name
+        }
+
+        for (index, fieldSet) in screenFields.enumerated() {
+            for (name, field) in [
+                ("Screen \(index) X", fieldSet.x),
+                ("Screen \(index) Y", fieldSet.y),
+                ("Screen \(index) width", fieldSet.width),
+                ("Screen \(index) height", fieldSet.height),
+                ("Screen \(index) sensitivity", fieldSet.sensitivity),
+            ] where parsedFiniteDouble(field) == nil {
+                return name
+            }
+        }
+
+        return nil
+    }
+
+    private func parsedFiniteDouble(_ field: NSTextField) -> Double? {
+        let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let value = Double(text), value.isFinite else {
+            return nil
+        }
+        return value
     }
 }
 
@@ -1192,6 +1271,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var statusMenuItem: NSMenuItem?
     private var lastSyncMenuItem: NSMenuItem?
+    private var launchAtLoginMenuItem: NSMenuItem?
     private var configWindow: ConfigWindowController?
 
     init(options: Options) {
@@ -1229,6 +1309,10 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         configureItem.target = self
         menu.addItem(configureItem)
 
+        let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        launchAtLoginItem.target = self
+        menu.addItem(launchAtLoginItem)
+
         let quitItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
@@ -1237,10 +1321,40 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         statusItem = item
         statusMenuItem = status
         lastSyncMenuItem = lastSync
+        launchAtLoginMenuItem = launchAtLoginItem
+        updateLaunchAtLoginItem()
     }
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        guard #available(macOS 13.0, *) else {
+            showAlert(title: "Launch at Login Unavailable", message: "Launch at Login requires macOS 13 or newer.")
+            return
+        }
+
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+            updateLaunchAtLoginItem()
+        } catch {
+            showAlert(title: "Could Not Update Login Item", message: "\(error)")
+        }
+    }
+
+    private func updateLaunchAtLoginItem() {
+        guard #available(macOS 13.0, *) else {
+            launchAtLoginMenuItem?.isEnabled = false
+            launchAtLoginMenuItem?.state = .off
+            return
+        }
+
+        launchAtLoginMenuItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off
     }
 
     @objc private func openConfiguration() {
@@ -1527,7 +1641,13 @@ private extension Data {
     }
 }
 
-let app = NSApplication.shared
-private let delegate = LiveSyncApp(options: parseOptions())
-app.delegate = delegate
-app.run()
+@main
+private struct ScreenHopperLiveMain {
+    private static let delegate = LiveSyncApp(options: parseOptions())
+
+    static func main() {
+        let app = NSApplication.shared
+        app.delegate = delegate
+        app.run()
+    }
+}

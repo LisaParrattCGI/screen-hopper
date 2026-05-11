@@ -8,26 +8,20 @@ import sys
 
 import hid
 
-VENDOR_ID = 0xCAFE
-PRODUCT_ID = 0xBAF3
-
-CONFIG_VERSION = 6
-RUNTIME_SIZE = 64
-REPORT_ID_RUNTIME = 101
-MOUSE_CONFIG_SCALE = 65536
-
-GET_STATUS = 1
-SET_HOST_CURSOR = 2
-SET_MOUSE_CONFIG = 3
-GET_MOUSE_CONFIG = 4
-
-DEFAULT_MOUSE_CONFIG = {
-    "tracking_speed": 0.6875,
-    "pointer_resolution": 400.0,
-    "frame_rate": 67.0,
-    "fixed_multiplier": 1.0,
-    "placement_tolerance": 0.5,
-}
+from hid_protocol import (
+    CONFIG_VERSION,
+    DEFAULT_MOUSE_CONFIG,
+    MOUSE_CONFIG_SCALE,
+    PRODUCT_ID,
+    REPORT_ID_RUNTIME,
+    RUNTIME_COMMAND_GET_MOUSE_CONFIG as GET_MOUSE_CONFIG,
+    RUNTIME_COMMAND_GET_STATUS as GET_STATUS,
+    RUNTIME_COMMAND_SET_HOST_CURSOR as SET_HOST_CURSOR,
+    RUNTIME_COMMAND_SET_MOUSE_CONFIG as SET_MOUSE_CONFIG,
+    RUNTIME_SIZE,
+    VENDOR_ID,
+    open_runtime_device,
+)
 
 
 def fixed16(value):
@@ -112,7 +106,7 @@ def main():
 
     args = parser.parse_args()
 
-    device = hid.Device(VENDOR_ID, PRODUCT_ID)
+    device = open_runtime_device(hid)
 
     if args.command == "get":
         print(json.dumps(get_status(device), indent=2))

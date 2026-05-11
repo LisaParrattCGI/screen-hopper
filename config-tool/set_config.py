@@ -6,32 +6,25 @@ import binascii
 import struct
 import json
 
-VENDOR_ID = 0xCAFE
-PRODUCT_ID = 0xBAF3
-
-CONFIG_VERSION = 6
-CONFIG_SIZE = 64
-REPORT_ID_CONFIG = 100
-MOUSE_CONFIG_SCALE = 65536
-
-SET_CONFIG = 2
-CLEAR_MAPPING = 4
-ADD_MAPPING = 5
-PERSIST_CONFIG = 7
-SUSPEND = 10
-RESUME = 11
-SET_SCREEN = 12
-
-UNMAPPED_PASSTHROUGH_FLAG = 0x01
-STICKY_FLAG = 0x01
-
-DEFAULT_MOUSE_CONFIG = {
-    "tracking_speed": 0.6875,
-    "pointer_resolution": 400.0,
-    "frame_rate": 67.0,
-    "fixed_multiplier": 1.0,
-    "placement_tolerance": 0.5,
-}
+from hid_protocol import (
+    CONFIG_COMMAND_ADD_MAPPING as ADD_MAPPING,
+    CONFIG_COMMAND_CLEAR_MAPPING as CLEAR_MAPPING,
+    CONFIG_COMMAND_PERSIST_CONFIG as PERSIST_CONFIG,
+    CONFIG_COMMAND_RESUME as RESUME,
+    CONFIG_COMMAND_SET_CONFIG as SET_CONFIG,
+    CONFIG_COMMAND_SET_SCREEN as SET_SCREEN,
+    CONFIG_COMMAND_SUSPEND as SUSPEND,
+    CONFIG_SIZE,
+    CONFIG_VERSION,
+    DEFAULT_MOUSE_CONFIG,
+    MOUSE_CONFIG_SCALE,
+    PRODUCT_ID,
+    REPORT_ID_CONFIG,
+    STICKY_FLAG,
+    UNMAPPED_PASSTHROUGH_FLAG,
+    VENDOR_ID,
+    open_config_device,
+)
 
 
 def fixed16(value):
@@ -65,7 +58,7 @@ def send_command(device, command, payload=b""):
 
 config = json.load(sys.stdin)
 
-device = hid.Device(VENDOR_ID, PRODUCT_ID)
+device = open_config_device(hid)
 
 send_command(device, SUSPEND)
 

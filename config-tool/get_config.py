@@ -5,21 +5,20 @@ import binascii
 import struct
 import json
 
-VENDOR_ID = 0xCAFE
-PRODUCT_ID = 0xBAF3
-
-CONFIG_VERSION = 6
-CONFIG_SIZE = 64
-REPORT_ID_CONFIG = 100
-MOUSE_CONFIG_SCALE = 65536
-
-GET_CONFIG = 3
-GET_MAPPING = 6
-GET_SCREEN = 13
-
-UNMAPPED_PASSTHROUGH_FLAG = 0x01
-
-NSCREENS = 2
+from hid_protocol import (
+    CONFIG_COMMAND_GET_CONFIG as GET_CONFIG,
+    CONFIG_COMMAND_GET_MAPPING as GET_MAPPING,
+    CONFIG_COMMAND_GET_SCREEN as GET_SCREEN,
+    CONFIG_SIZE,
+    CONFIG_VERSION,
+    MOUSE_CONFIG_SCALE,
+    PRODUCT_ID,
+    REPORT_ID_CONFIG,
+    SCREEN_COUNT,
+    UNMAPPED_PASSTHROUGH_FLAG,
+    VENDOR_ID,
+    open_config_device,
+)
 
 
 def from_fixed16(value):
@@ -46,7 +45,7 @@ def read_feature(device):
     return payload[:-4]
 
 
-device = hid.Device(VENDOR_ID, PRODUCT_ID)
+device = open_config_device(hid)
 
 send_command(device, GET_CONFIG)
 payload = read_feature(device)
@@ -105,7 +104,7 @@ for i in range(mapping_count):
         }
     )
 
-for i in range(NSCREENS):
+for i in range(SCREEN_COUNT):
     send_command(device, GET_SCREEN, struct.pack("<L", i))
     payload = read_feature(device)
     x, y, w, h, sensitivity = struct.unpack_from("<LLLLL", payload)

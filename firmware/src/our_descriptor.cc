@@ -1,9 +1,9 @@
 #include "our_descriptor.h"
 
-const uint8_t REPORT_ID_MOUSE = 1;
-const uint8_t REPORT_ID_MOUSE_RELATIVE = 4;
-const uint8_t REPORT_ID_KEYBOARD = 2;
-const uint8_t REPORT_ID_CONSUMER = 3;
+const uint8_t REPORT_ID_MOUSE = REPORT_ID_MOUSE_ABSOLUTE;
+const uint8_t REPORT_ID_MOUSE_RELATIVE = REPORT_ID_MOUSE_RELATIVE_FIXED;
+const uint8_t REPORT_ID_KEYBOARD = REPORT_ID_KEYBOARD_FIXED;
+const uint8_t REPORT_ID_CONSUMER = REPORT_ID_CONSUMER_FIXED;
 
 // clang-format off
 const uint8_t our_report_descriptor[] = {
@@ -74,20 +74,20 @@ const uint8_t our_report_descriptor[] = {
     0x81, 0x02,                 //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
     0xC0,                       // End Collection
 
-    0x06, 0x00, 0xFF,           // Usage Page (Vendor Defined 0xFF00)
-    0x09, 0x20,                 // Usage (0x20)
+    0x06, CONFIG_USAGE_PAGE & 0xFF, CONFIG_USAGE_PAGE >> 8,  // Usage Page (Vendor Defined 0xFF00)
+    0x09, CONFIG_USAGE,         // Usage (0x20)
     0xA1, 0x01,                 // Collection (Application)
-    0x09, 0x20,                 //   Usage (0x20)
+    0x09, CONFIG_USAGE,         //   Usage (0x20)
     0x85, REPORT_ID_CONFIG,     //   Report ID (REPORT_ID_CONFIG)
     0x75, 0x08,                 //   Report Size (8)
     0x95, CONFIG_SIZE,          //   Report Count (CONFIG_SIZE)
     0xB1, 0x02,                 //   Feature (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position,Non-volatile)
     0xC0,                       // End Collection
 
-    0x06, 0x01, 0xFF,           // Usage Page (Vendor Defined 0xFF01)
-    0x09, 0x21,                 // Usage (0x21)
+    0x06, RUNTIME_USAGE_PAGE & 0xFF, RUNTIME_USAGE_PAGE >> 8,  // Usage Page (Vendor Defined 0xFF01)
+    0x09, RUNTIME_USAGE,        // Usage (0x21)
     0xA1, 0x01,                 // Collection (Application)
-    0x09, 0x21,                 //   Usage (0x21)
+    0x09, RUNTIME_USAGE,        //   Usage (0x21)
     0x85, REPORT_ID_RUNTIME,    //   Report ID (REPORT_ID_RUNTIME)
     0x75, 0x08,                 //   Report Size (8)
     0x95, RUNTIME_SIZE,         //   Report Count (RUNTIME_SIZE)

@@ -28,8 +28,6 @@
 #define FORWARDER_UART uart1
 #define FORWARDER_TX_PIN 20
 
-const uint8_t MAPPING_FLAG_STICKY = 0x01;
-
 const uint8_t V_RESOLUTION_BITMASK = (1 << 0);
 const uint8_t H_RESOLUTION_BITMASK = (1 << 2);
 const uint32_t V_SCROLL_USAGE = 0x00010038;

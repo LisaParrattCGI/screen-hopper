@@ -1,51 +1,43 @@
 import crc32 from './crc.js';
 import usages from './usages.js';
 import examples from './examples.js';
-
-const REPORT_ID_CONFIG = 100;
-const REPORT_ID_RUNTIME = 101;
-const UNMAPPED_PASSTHROUGH_FLAG = 0x01;
-const STICKY_FLAG = 0x01;
-const CONFIG_SIZE = 64;
-const RUNTIME_SIZE = 64;
-const CONFIG_VERSION = 6;
-const VENDOR_ID = 0xCAFE;
-const PRODUCT_ID = 0xBAF3;
-const DEFAULT_PARTIAL_SCROLL_TIMEOUT = 1000000;
-const DEFAULT_SCALING = 1000;
-const DEFAULT_SENSITIVITY = 1000;
-const MOUSE_CONFIG_SCALE = 65536;
-
-const SET_CONFIG = 2;
-const GET_CONFIG = 3;
-const CLEAR_MAPPING = 4;
-const ADD_MAPPING = 5;
-const GET_MAPPING = 6;
-const PERSIST_CONFIG = 7;
-const GET_OUR_USAGES = 8
-const GET_THEIR_USAGES = 9
-const SUSPEND = 10;
-const RESUME = 11;
-const SET_SCREEN = 12;
-const GET_SCREEN = 13;
-
-const GET_RUNTIME_STATUS = 1;
-const SET_RUNTIME_HOST_CURSOR = 2;
-const SET_RUNTIME_MOUSE_CONFIG = 3;
+import {
+    ADD_MAPPING,
+    CLEAR_MAPPING,
+    CONFIG_SIZE,
+    CONFIG_VERSION,
+    DEFAULT_MOUSE_CONFIG,
+    DEFAULT_PARTIAL_SCROLL_TIMEOUT,
+    DEFAULT_SCALING,
+    DEFAULT_SENSITIVITY,
+    GET_CONFIG,
+    GET_MAPPING,
+    GET_OUR_USAGES,
+    GET_RUNTIME_STATUS,
+    GET_SCREEN,
+    GET_THEIR_USAGES,
+    MOUSE_CONFIG_SCALE,
+    PERSIST_CONFIG,
+    PRODUCT_ID,
+    REPORT_ID_CONFIG,
+    REPORT_ID_RUNTIME,
+    RESUME,
+    RUNTIME_SIZE,
+    SET_CONFIG,
+    SET_RUNTIME_HOST_CURSOR,
+    SET_RUNTIME_MOUSE_CONFIG,
+    SET_SCREEN,
+    STICKY_FLAG,
+    SUSPEND,
+    UNMAPPED_PASSTHROUGH_FLAG,
+    VENDOR_ID,
+} from './hid_protocol.js';
 
 const UINT8 = Symbol('uint8');
 const INT8 = Symbol('int8');
 const UINT32 = Symbol('uint32');
 const INT32 = Symbol('int32');
 const INT64 = Symbol('int64');
-
-const DEFAULT_MOUSE_CONFIG = {
-    'tracking_speed': 0.6875,
-    'pointer_resolution': 400.0,
-    'frame_rate': 67.0,
-    'fixed_multiplier': 1.0,
-    'placement_tolerance': 0.5,
-};
 
 let device = null;
 let modal = null;

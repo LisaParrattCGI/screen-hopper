@@ -1,1 +1,12 @@
-firmware/build
+firmware/build/
+macos-live-sync/.build/
+macos-live-sync/ScreenHopperLive
+
+MouseProbe
+mouse_probe_*.json
+results.csv
+
+*.dSYM/
+__pycache__/
+*.swp
+.DS_Store

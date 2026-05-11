@@ -3,33 +3,7 @@
 
 #include <stdint.h>
 
-#define CONFIG_SIZE 64
-#define RUNTIME_SIZE 64
-
-enum class ConfigCommand : int8_t {
-    NO_COMMAND = 0,
-    RESET_INTO_BOOTSEL = 1,
-    SET_CONFIG = 2,
-    GET_CONFIG = 3,
-    CLEAR_MAPPING = 4,
-    ADD_MAPPING = 5,
-    GET_MAPPING = 6,
-    PERSIST_CONFIG = 7,
-    GET_OUR_USAGES = 8,
-    GET_THEIR_USAGES = 9,
-    SUSPEND = 10,
-    RESUME = 11,
-    SET_SCREEN = 12,
-    GET_SCREEN = 13,
-};
-
-enum class RuntimeCommand : int8_t {
-    NO_COMMAND = 0,
-    GET_STATUS = 1,
-    SET_HOST_CURSOR = 2,
-    SET_MOUSE_CONFIG = 3,
-    GET_MOUSE_CONFIG = 4,
-};
+#include "hid_protocol.h"
 
 struct usage_def_t {
     uint8_t report_id;
@@ -95,8 +69,6 @@ struct __attribute__((packed)) macos_mouse_config_t {
     uint32_t fixed_multiplier;
     uint32_t placement_tolerance;
 };
-
-#define NSCREENS 2
 
 struct __attribute__((packed)) persist_config_t {
     uint8_t version;

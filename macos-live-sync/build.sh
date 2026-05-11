@@ -24,8 +24,18 @@ export CLANG_MODULE_CACHE_PATH
 
 swiftc \
     -module-cache-path "$PWD/.build/module-cache" \
+    HIDProtocol.swift \
     ScreenHopperLive.swift \
     -framework AppKit \
     -framework CoreGraphics \
     -framework IOKit \
+    -framework ServiceManagement \
     -o ScreenHopperLive
+
+app_dir="$PWD/.build/ScreenHopperLive.app"
+contents_dir="$app_dir/Contents"
+
+mkdir -p "$contents_dir/MacOS" "$contents_dir/Resources"
+cp Info.plist "$contents_dir/Info.plist"
+cp ScreenHopperLive "$contents_dir/MacOS/ScreenHopperLive"
+chmod 755 "$contents_dir/MacOS/ScreenHopperLive"

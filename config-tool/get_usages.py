@@ -5,16 +5,17 @@ import binascii
 import struct
 import json
 
-VENDOR_ID = 0xCAFE
-PRODUCT_ID = 0xBAF3
-
-CONFIG_VERSION = 6
-CONFIG_SIZE = 64
-REPORT_ID_CONFIG = 100
-
-GET_CONFIG = 3
-GET_OUR_USAGES = 8
-GET_THEIR_USAGES = 9
+from hid_protocol import (
+    CONFIG_COMMAND_GET_CONFIG as GET_CONFIG,
+    CONFIG_COMMAND_GET_OUR_USAGES as GET_OUR_USAGES,
+    CONFIG_COMMAND_GET_THEIR_USAGES as GET_THEIR_USAGES,
+    CONFIG_SIZE,
+    CONFIG_VERSION,
+    PRODUCT_ID,
+    REPORT_ID_CONFIG,
+    VENDOR_ID,
+    open_config_device,
+)
 
 
 def feature_report(command, payload=b""):
@@ -37,7 +38,7 @@ def read_feature(device):
     return payload[:-4]
 
 
-device = hid.Device(VENDOR_ID, PRODUCT_ID)
+device = open_config_device(hid)
 
 send_command(device, GET_CONFIG)
 payload = read_feature(device)
