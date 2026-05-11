@@ -3,7 +3,56 @@
 
 #include <stdint.h>
 
-#include "hid_protocol.h"
+#define SCREEN_HOPPER_VENDOR_ID 0xCAFE
+#define SCREEN_HOPPER_PRODUCT_ID 0xBAF3
+
+#define CONFIG_VERSION 6
+#define CONFIG_SIZE 64
+#define RUNTIME_SIZE 64
+
+#define REPORT_ID_MOUSE_ABSOLUTE 1
+#define REPORT_ID_KEYBOARD_FIXED 2
+#define REPORT_ID_CONSUMER_FIXED 3
+#define REPORT_ID_MOUSE_RELATIVE_FIXED 4
+#define REPORT_ID_MULTIPLIER 99
+#define REPORT_ID_CONFIG 100
+#define REPORT_ID_RUNTIME 101
+
+#define CONFIG_USAGE_PAGE 0xFF00
+#define CONFIG_USAGE 0x20
+#define RUNTIME_USAGE_PAGE 0xFF01
+#define RUNTIME_USAGE 0x21
+
+#define CONFIG_FLAG_UNMAPPED_PASSTHROUGH 0x01
+#define MAPPING_FLAG_STICKY 0x01
+
+#define MOUSE_CONFIG_SCALE 65536
+#define NSCREENS 2
+
+enum class ConfigCommand : int8_t {
+    NO_COMMAND = 0,
+    RESET_INTO_BOOTSEL = 1,
+    SET_CONFIG = 2,
+    GET_CONFIG = 3,
+    CLEAR_MAPPING = 4,
+    ADD_MAPPING = 5,
+    GET_MAPPING = 6,
+    PERSIST_CONFIG = 7,
+    GET_OUR_USAGES = 8,
+    GET_THEIR_USAGES = 9,
+    SUSPEND = 10,
+    RESUME = 11,
+    SET_SCREEN = 12,
+    GET_SCREEN = 13,
+};
+
+enum class RuntimeCommand : int8_t {
+    NO_COMMAND = 0,
+    GET_STATUS = 1,
+    SET_HOST_CURSOR = 2,
+    SET_MOUSE_CONFIG = 3,
+    GET_MOUSE_CONFIG = 4,
+};
 
 struct usage_def_t {
     uint8_t report_id;
