@@ -3,15 +3,35 @@
 
 #include "hardware/gpio.h"
 
+#include "forwarder_control.h"
 #include "serial.h"
+#include "status_led.h"
 
 #define FORWARDER_UART uart1
 #define FORWARDER_RX_PIN 9
 
 bool led_state = false;
 
+bool handle_control_packet(const uint8_t* data, uint16_t len) {
+    if (len != sizeof(forwarder_control_t) || data[0] != FORWARDER_CONTROL_REPORT_ID) {
+        return false;
+    }
+
+    const forwarder_control_t* msg = (const forwarder_control_t*) data;
+    if (msg->command == FORWARDER_CONTROL_SET_ACTIVE) {
+        status_led_set_red(msg->value != 0);
+    }
+    return true;
+}
+
 void serial_callback(const uint8_t* data, uint16_t len) {
-    tud_hid_report(data[0], data + 1, len - 1);
+    if (handle_control_packet(data, len)) {
+        return;
+    }
+
+    if (tud_hid_report(data[0], data + 1, len - 1)) {
+        status_led_flash_green();
+    }
     board_led_write(led_state);
     led_state = !led_state;
 }
@@ -24,12 +44,14 @@ void forwarder_serial_init() {
 
 int main() {
     board_init();
+    status_led_init();
     tusb_init();
     forwarder_serial_init();
 
     while (true) {
         serial_read(serial_callback, FORWARDER_UART);
         tud_task();
+        status_led_task();
     }
 
     return 0;
