@@ -54,6 +54,27 @@ uint32_t double_to_fixed16(double value) {
     return (uint32_t) scaled;
 }
 
+uint32_t max_persisted_mapping_count() {
+    return (FLASH_SECTOR_SIZE - sizeof(persist_config_t) - sizeof(crc32_t)) / sizeof(mapping_config_t);
+}
+
+bool constraint_mode_ok(ConstraintMode mode) {
+    int8_t value = (int8_t) mode;
+    return value >= (int8_t) ConstraintMode::NO_CONSTRAINT && value <= (int8_t) ConstraintMode::VISIBLE;
+}
+
+bool screen_ok(const screen_def_t& screen) {
+    return screen.w > 0 && screen.h > 0 && screen.sensitivity > 0;
+}
+
+void set_interval_override_checked(uint8_t value) {
+    uint8_t prev_interval_override = interval_override;
+    interval_override = value;
+    if (prev_interval_override != interval_override) {
+        interval_override_updated();
+    }
+}
+
 void apply_mouse_config(const macos_mouse_config_t* config) {
     macos_pointer_acceleration.tracking_speed = fixed16_to_double(config->tracking_speed);
 
@@ -87,19 +108,31 @@ void load_config() {
     if (checksum_ok(FLASH_CONFIG_IN_MEMORY, FLASH_SECTOR_SIZE) && version_ok(FLASH_CONFIG_IN_MEMORY)) {
         persist_config_t* config = (persist_config_t*) FLASH_CONFIG_IN_MEMORY;
         unmapped_passthrough = (config->flags & CONFIG_FLAG_UNMAPPED_PASSTHROUGH) != 0;
-        partial_scroll_timeout = config->partial_scroll_timeout;
-        interval_override = config->interval_override;
-        constraint_mode = config->constraint_mode;
-        screens[-1].sensitivity = config->offscreen_sensitivity;
+        if (config->partial_scroll_timeout > 0) {
+            partial_scroll_timeout = config->partial_scroll_timeout;
+        }
+        set_interval_override_checked(config->interval_override);
+        if (constraint_mode_ok(config->constraint_mode)) {
+            constraint_mode = config->constraint_mode;
+        }
+        if (config->offscreen_sensitivity > 0) {
+            screens[-1].sensitivity = config->offscreen_sensitivity;
+        }
         cursor_placement_interval_seconds = config->cursor_placement_interval_seconds;
         persistent_mouse_config = config->mouse_config;
         apply_mouse_config(&persistent_mouse_config);
         fill_mouse_config(&persistent_mouse_config);
         for (uint8_t i = 0; i < NSCREENS; i++) {
-            screens[i] = config->screens[i];
+            if (screen_ok(config->screens[i])) {
+                screens[i] = config->screens[i];
+            }
         }
         mapping_config_t* buffer_mappings = (mapping_config_t*) (FLASH_CONFIG_IN_MEMORY + sizeof(persist_config_t));
-        for (uint32_t i = 0; i < config->mapping_count; i++) {
+        uint32_t mapping_count = config->mapping_count;
+        if (mapping_count > max_persisted_mapping_count()) {
+            mapping_count = max_persisted_mapping_count();
+        }
+        for (uint32_t i = 0; i < mapping_count; i++) {
             config_mappings.push_back(buffer_mappings[i]);
         }
     }
@@ -115,6 +148,9 @@ void fill_get_config(get_config_t* config) {
     }
     config->partial_scroll_timeout = partial_scroll_timeout;
     config->mapping_count = config_mappings.size();
+    if (config->mapping_count > max_persisted_mapping_count()) {
+        config->mapping_count = max_persisted_mapping_count();
+    }
     config->our_usage_count = our_usages_rle.size();
     config->their_usage_count = their_usages_rle.size();
     config->interval_override = interval_override;
@@ -206,6 +242,7 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
                 if (requested_index < NSCREENS) {
                     *returned_screen = screens[requested_index];
                 }
+                break;
             }
             default:
                 break;
@@ -231,13 +268,14 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                     break;
                 case ConfigCommand::SET_CONFIG: {
                     set_config_t* config = (set_config_t*) ((set_feature_t*) buffer)->data;
+                    if (config->partial_scroll_timeout == 0 ||
+                        !constraint_mode_ok(config->constraint_mode) ||
+                        config->offscreen_sensitivity == 0) {
+                        break;
+                    }
                     unmapped_passthrough = (config->flags & CONFIG_FLAG_UNMAPPED_PASSTHROUGH) != 0;
                     partial_scroll_timeout = config->partial_scroll_timeout;
-                    uint8_t prev_interval_override = interval_override;
-                    interval_override = config->interval_override;
-                    if (prev_interval_override != interval_override) {
-                        interval_override_updated();
-                    }
+                    set_interval_override_checked(config->interval_override);
                     constraint_mode = config->constraint_mode;
                     screens[-1].sensitivity = config->offscreen_sensitivity;
                     cursor_placement_interval_seconds = config->cursor_placement_interval_seconds;
@@ -253,8 +291,10 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                     break;
                 case ConfigCommand::ADD_MAPPING: {
                     mapping_config_t* mapping_config = (mapping_config_t*) ((set_feature_t*) buffer)->data;
-                    config_mappings.push_back(*mapping_config);
-                    set_mapping_from_config();
+                    if (config_mappings.size() < max_persisted_mapping_count()) {
+                        config_mappings.push_back(*mapping_config);
+                        set_mapping_from_config();
+                    }
                     break;
                 }
                 case ConfigCommand::GET_MAPPING:
@@ -277,8 +317,10 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                     break;
                 case ConfigCommand::SET_SCREEN: {
                     set_screen_t* set_screen = (set_screen_t*) ((set_feature_t*) buffer)->data;
-                    screens[set_screen->index] = set_screen->screen;
-                    screens_updated();
+                    if (set_screen->index < NSCREENS && screen_ok(set_screen->screen)) {
+                        screens[set_screen->index] = set_screen->screen;
+                        screens_updated();
+                    }
                     break;
                 }
                 default:
