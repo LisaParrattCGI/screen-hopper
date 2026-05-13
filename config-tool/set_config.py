@@ -47,6 +47,7 @@ unmapped_passthrough = config.get("unmapped_passthrough", True)
 interval_override = config.get("interval_override", 0)
 constraint_mode = config.get("constraint_mode", 0)
 offscreen_sensitivity = config.get("offscreen_sensitivity", 1000)
+cursor_placement_interval_seconds = config.get("cursor_placement_interval_seconds", 0)
 
 flags = UNMAPPED_PASSTHROUGH_FLAG if unmapped_passthrough else 0
 
@@ -54,12 +55,13 @@ send_command(
     device,
     SET_CONFIG,
     struct.pack(
-        "<BLBBL",
+        "<BLBBLL",
         flags,
         partial_scroll_timeout,
         interval_override,
         constraint_mode,
         offscreen_sensitivity,
+        cursor_placement_interval_seconds,
     ),
 )
 
