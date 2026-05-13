@@ -1015,10 +1015,6 @@ void sof_handler(uint32_t frame_count) {
     tick_pending = true;
 }
 
-extern "C" void tud_sof_cb(uint32_t frame_count) {
-    sof_handler(frame_count);
-}
-
 void forwarder_serial_init() {
     uart_init(FORWARDER_UART, FORWARDER_BAUDRATE);
     uart_set_translate_crlf(FORWARDER_UART, false);
@@ -1036,7 +1032,7 @@ int main() {
     update_active_screen_leds();
     tusb_init();
 
-    tud_sof_cb_enable(true);
+    tud_sof_isr_set(sof_handler);
 
     next_print = time_us_64() + 1000000;
 

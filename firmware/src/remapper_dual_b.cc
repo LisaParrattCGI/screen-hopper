@@ -44,7 +44,6 @@ int main() {
         status_led_task();
     }
 
-    tuh_hid_set_default_protocol(HID_PROTOCOL_REPORT);
     tusb_init();
 
     while (true) {
