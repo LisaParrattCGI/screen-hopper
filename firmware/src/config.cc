@@ -91,6 +91,10 @@ void load_config() {
         interval_override = config->interval_override;
         constraint_mode = config->constraint_mode;
         screens[-1].sensitivity = config->offscreen_sensitivity;
+        cursor_placement_interval_seconds = config->cursor_placement_interval_seconds;
+        persistent_mouse_config = config->mouse_config;
+        apply_mouse_config(&persistent_mouse_config);
+        fill_mouse_config(&persistent_mouse_config);
         for (uint8_t i = 0; i < NSCREENS; i++) {
             screens[i] = config->screens[i];
         }
@@ -131,6 +135,8 @@ void fill_persist_config(persist_config_t* config) {
     config->interval_override = interval_override;
     config->constraint_mode = constraint_mode;
     config->offscreen_sensitivity = screens[-1].sensitivity;
+    config->cursor_placement_interval_seconds = cursor_placement_interval_seconds;
+    config->mouse_config = persistent_mouse_config;
     for (uint8_t i = 0; i < NSCREENS; i++) {
         config->screens[i] = screens[i];
     }
