@@ -8,6 +8,7 @@
 #include "dual.h"
 #include "interval_override.h"
 #include "serial.h"
+#include "status_led.h"
 
 bool led_state;
 uint8_t buffer[SERIAL_MAX_PAYLOAD_SIZE + sizeof(device_connected_t)];
@@ -35,10 +36,12 @@ void request_b_init() {
 int main() {
     serial_init();
     board_init();
+    status_led_init();
 
     while (!initialized) {
         request_b_init();
         serial_read(serial_callback);
+        status_led_task();
     }
 
     tuh_hid_set_default_protocol(HID_PROTOCOL_REPORT);
@@ -47,6 +50,7 @@ int main() {
     while (true) {
         tuh_task();
         serial_read(serial_callback);
+        status_led_task();
     }
 
     return 0;
@@ -55,6 +59,7 @@ int main() {
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
     led_state = !led_state;
     board_led_write(led_state);
+    status_led_flash_green();
 
     report_received_t* msg = (report_received_t*) buffer;
     msg->command = DualCommand::REPORT_RECEIVED;
