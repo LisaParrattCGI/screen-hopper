@@ -1,40 +1,48 @@
 #!/usr/bin/env python3
 
-import hid
 import binascii
-import struct
 import json
+import struct
 
-VENDOR_ID = 0xCAFE
-PRODUCT_ID = 0xBAF3
+import hid
 
-CONFIG_VERSION = 4
-CONFIG_SIZE = 32
-REPORT_ID_CONFIG = 100
+from hid_protocol import (
+    CONFIG_COMMAND_GET_CONFIG as GET_CONFIG,
+    CONFIG_COMMAND_GET_OUR_USAGES as GET_OUR_USAGES,
+    CONFIG_COMMAND_GET_THEIR_USAGES as GET_THEIR_USAGES,
+    CONFIG_SIZE,
+    CONFIG_VERSION,
+    REPORT_ID_CONFIG,
+    open_config_device,
+    read_feature_payload,
+)
 
-GET_CONFIG = 3
-GET_OUR_USAGES = 8
-GET_THEIR_USAGES = 9
+
+def feature_report(command, payload=b""):
+    body = struct.pack("<BB", CONFIG_VERSION, command) + payload
+    if len(body) > CONFIG_SIZE - 4:
+        raise ValueError("feature payload is too large")
+    body += bytes(CONFIG_SIZE - 4 - len(body))
+    return bytes([REPORT_ID_CONFIG]) + body + struct.pack("<L", binascii.crc32(body))
 
 
-def check_crc(buf, crc_):
-    if binascii.crc32(buf[1:29]) != crc_:
+def send_command(device, command, payload=b""):
+    device.send_feature_report(feature_report(command, payload))
+
+
+def read_feature(device):
+    payload = read_feature_payload(device, REPORT_ID_CONFIG, CONFIG_SIZE, "config")
+    if binascii.crc32(payload[:-4]) != struct.unpack_from("<L", payload, CONFIG_SIZE - 4)[0]:
         raise Exception("CRC mismatch")
+    return payload[:-4]
 
 
-def add_crc(buf):
-    return buf + struct.pack("<L", binascii.crc32(buf[1:]))
+device = open_config_device(hid)
 
-
-device = hid.Device(VENDOR_ID, PRODUCT_ID)
-
-data = struct.pack("<BBB26B", REPORT_ID_CONFIG, CONFIG_VERSION, GET_CONFIG, *([0] * 26))
-device.send_feature_report(add_crc(data))
-
-data = device.get_feature_report(REPORT_ID_CONFIG, CONFIG_SIZE + 1)
+send_command(device, GET_CONFIG)
+payload = read_feature(device)
 
 (
-    report_id,
     version,
     flags,
     partial_scroll_timeout,
@@ -42,10 +50,10 @@ data = device.get_feature_report(REPORT_ID_CONFIG, CONFIG_SIZE + 1)
     our_usage_count,
     their_usage_count,
     interval_override,
-    *_,
-    crc,
-) = struct.unpack("<BBBLLLLB9BL", data)
-check_crc(data, crc)
+) = struct.unpack_from("<BBLLLLB", payload)
+
+if version != CONFIG_VERSION:
+    raise Exception("Incompatible version")
 
 usages = {"our_usages": [], "their_usages": []}
 
@@ -54,13 +62,9 @@ for command, key, count in [
     [GET_THEIR_USAGES, "their_usages", their_usage_count],
 ]:
     for i in range(0, count, 3):
-        data = struct.pack(
-            "<BBBL22B", REPORT_ID_CONFIG, CONFIG_VERSION, command, i, *([0] * 22)
-        )
-        device.send_feature_report(add_crc(data))
-        data = device.get_feature_report(REPORT_ID_CONFIG, CONFIG_SIZE + 1)
-        (report_id, *usages_rle, _, crc) = struct.unpack("<B6L4BL", data)
-        check_crc(data, crc)
+        send_command(device, command, struct.pack("<L", i))
+        payload = read_feature(device)
+        usages_rle = struct.unpack_from("<6L", payload)
         for u, l in zip(*(iter(usages_rle),) * 2):
             if u != 0:
                 usages[key].extend("{0:#010x}".format(u + i) for i in range(l))
