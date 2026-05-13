@@ -1,34 +1,43 @@
 import crc32 from './crc.js';
 import usages from './usages.js';
 import examples from './examples.js';
-
-const REPORT_ID_CONFIG = 100;
-const UNMAPPED_PASSTHROUGH_FLAG = 0x01;
-const STICKY_FLAG = 0x01;
-const CONFIG_SIZE = 32;
-const CONFIG_VERSION = 4;
-const VENDOR_ID = 0xCAFE;
-const PRODUCT_ID = 0xBAF3;
-const DEFAULT_PARTIAL_SCROLL_TIMEOUT = 1000000;
-const DEFAULT_SCALING = 1000;
-const DEFAULT_SENSITIVITY = 1000;
-
-const SET_CONFIG = 2;
-const GET_CONFIG = 3;
-const CLEAR_MAPPING = 4;
-const ADD_MAPPING = 5;
-const GET_MAPPING = 6;
-const PERSIST_CONFIG = 7;
-const GET_OUR_USAGES = 8
-const GET_THEIR_USAGES = 9
-const SUSPEND = 10;
-const RESUME = 11;
-const SET_SCREEN = 12;
-const GET_SCREEN = 13;
+import {
+    ADD_MAPPING,
+    CLEAR_MAPPING,
+    CONFIG_SIZE,
+    CONFIG_VERSION,
+    DEFAULT_MOUSE_CONFIG,
+    DEFAULT_PARTIAL_SCROLL_TIMEOUT,
+    DEFAULT_SCALING,
+    DEFAULT_SENSITIVITY,
+    GET_CONFIG,
+    GET_MAPPING,
+    GET_OUR_USAGES,
+    GET_RUNTIME_STATUS,
+    GET_SCREEN,
+    GET_THEIR_USAGES,
+    MOUSE_CONFIG_SCALE,
+    PERSIST_CONFIG,
+    PRODUCT_ID,
+    REPORT_ID_CONFIG,
+    REPORT_ID_RUNTIME,
+    RESUME,
+    RUNTIME_SIZE,
+    SET_CONFIG,
+    SET_RUNTIME_HOST_CURSOR,
+    SET_RUNTIME_MOUSE_CONFIG,
+    SET_SCREEN,
+    STICKY_FLAG,
+    SUSPEND,
+    UNMAPPED_PASSTHROUGH_FLAG,
+    VENDOR_ID,
+} from './hid_protocol.js';
 
 const UINT8 = Symbol('uint8');
+const INT8 = Symbol('int8');
 const UINT32 = Symbol('uint32');
 const INT32 = Symbol('int32');
+const INT64 = Symbol('int64');
 
 let device = null;
 let modal = null;
@@ -40,6 +49,8 @@ let config = {
     'interval_override': 0,
     'constraint_mode': 2,
     'offscreen_sensitivity': 4000,
+    'cursor_placement_interval_seconds': 0,
+    'mouse': { ...DEFAULT_MOUSE_CONFIG },
     'screens': [
         {
             'x': 0,
@@ -71,6 +82,9 @@ document.addEventListener("DOMContentLoaded", function () {
     document.getElementById("open_device").addEventListener("click", open_device);
     document.getElementById("load_from_device").addEventListener("click", load_from_device);
     document.getElementById("save_to_device").addEventListener("click", save_to_device);
+    document.getElementById("load_runtime_status").addEventListener("click", load_runtime_status);
+    document.getElementById("apply_runtime_cursor").addEventListener("click", apply_runtime_cursor);
+    document.getElementById("apply_runtime_mouse").addEventListener("click", apply_runtime_mouse);
     document.getElementById("add_mapping").addEventListener("click", add_mapping_onclick);
     document.getElementById("download_json").addEventListener("click", download_json);
     document.getElementById("upload_json").addEventListener("click", upload_json);
@@ -78,12 +92,19 @@ document.addEventListener("DOMContentLoaded", function () {
 
     document.getElementById("load_from_device").disabled = true;
     document.getElementById("save_to_device").disabled = true;
+    document.getElementById("load_runtime_status").disabled = true;
+    document.getElementById("apply_runtime_cursor").disabled = true;
+    document.getElementById("apply_runtime_mouse").disabled = true;
 
     document.getElementById("partial_scroll_timeout_input").addEventListener("change", partial_scroll_timeout_onchange);
     document.getElementById("unmapped_passthrough_checkbox").addEventListener("change", unmapped_passthrough_onchange);
     document.getElementById("interval_override_dropdown").addEventListener("change", interval_override_onchange);
     document.getElementById("constraint_mode_dropdown").addEventListener("change", constraint_mode_onchange);
     document.getElementById("offscreen_sensitivity_input").addEventListener("change", offscreen_sensitivity_onchange);
+    document.getElementById("cursor_placement_interval_input").addEventListener("change", cursor_placement_interval_onchange);
+    for (const param of ['tracking_speed', 'pointer_resolution', 'frame_rate', 'fixed_multiplier', 'placement_tolerance']) {
+        document.getElementById("mouse_" + param + "_input").addEventListener("change", mouse_config_onchange);
+    }
 
     for (let i = 0; i < 2; i++) {
         for (const param of ['x', 'y', 'w', 'h', 'sensitivity']) {
@@ -118,6 +139,9 @@ async function open_device() {
     }
     document.getElementById("load_from_device").disabled = !success;
     document.getElementById("save_to_device").disabled = !success;
+    document.getElementById("load_runtime_status").disabled = !success;
+    document.getElementById("apply_runtime_cursor").disabled = !success;
+    document.getElementById("apply_runtime_mouse").disabled = !success;
     if (!success) {
         device = null;
     }
@@ -131,8 +155,8 @@ async function load_from_device() {
 
     try {
         await send_feature_command(GET_CONFIG);
-        const [config_version, flags, partial_scroll_timeout, mapping_count, our_usage_count, their_usage_count, interval_override, constraint_mode, offscreen_sensitivity] =
-            await read_config_feature([UINT8, UINT8, UINT32, UINT32, UINT32, UINT32, UINT8, UINT8, UINT32]);
+        const [config_version, flags, partial_scroll_timeout, mapping_count, our_usage_count, their_usage_count, interval_override, constraint_mode, offscreen_sensitivity, cursor_placement_interval_seconds, tracking_speed, pointer_resolution, frame_rate, fixed_multiplier, placement_tolerance] =
+            await read_config_feature([UINT8, UINT8, UINT32, UINT32, UINT32, UINT32, UINT8, UINT8, UINT32, UINT32, UINT32, UINT32, UINT32, UINT32, UINT32]);
         check_version(config_version);
 
         config['version'] = config_version;
@@ -141,6 +165,14 @@ async function load_from_device() {
         config['interval_override'] = interval_override;
         config['constraint_mode'] = constraint_mode;
         config['offscreen_sensitivity'] = offscreen_sensitivity;
+        config['cursor_placement_interval_seconds'] = cursor_placement_interval_seconds;
+        config['mouse'] = {
+            'tracking_speed': from_fixed16(tracking_speed),
+            'pointer_resolution': from_fixed16(pointer_resolution),
+            'frame_rate': from_fixed16(frame_rate),
+            'fixed_multiplier': from_fixed16(fixed_multiplier),
+            'placement_tolerance': from_fixed16(placement_tolerance),
+        };
         config['mappings'] = [];
 
         for (let i = 0; i < 2; i++) {
@@ -187,6 +219,8 @@ async function save_to_device() {
             [UINT8, config['interval_override']],
             [UINT8, config['constraint_mode']],
             [UINT32, config['offscreen_sensitivity']],
+            [UINT32, config['cursor_placement_interval_seconds']],
+            ...mouse_config_fields(config['mouse']),
         ]);
 
         for (let i = 0; i < 2; i++) {
@@ -267,6 +301,11 @@ function set_config_ui_state() {
     document.getElementById('interval_override_dropdown').value = config['interval_override'];
     document.getElementById('constraint_mode_dropdown').value = config['constraint_mode'];
     document.getElementById('offscreen_sensitivity_input').value = config['offscreen_sensitivity'] / 1000;
+    document.getElementById('cursor_placement_interval_input').value = config['cursor_placement_interval_seconds'] || 0;
+    config['mouse'] = { ...DEFAULT_MOUSE_CONFIG, ...(config['mouse'] || {}) };
+    for (const param of ['tracking_speed', 'pointer_resolution', 'frame_rate', 'fixed_multiplier', 'placement_tolerance']) {
+        document.getElementById('mouse_' + param + '_input').value = config['mouse'][param];
+    }
 
     for (let i = 0; i < 2; i++) {
         for (const param of ['x', 'y', 'w', 'h']) {
@@ -353,8 +392,27 @@ function file_uploaded() {
     document.getElementById("file_input").value = '';
 }
 
-async function send_feature_command(command, fields = []) {
-    let buffer = new ArrayBuffer(CONFIG_SIZE);
+function fixed16(value) {
+    return Math.max(0, Math.min(0xffffffff, Math.round(parseFloat(value) * MOUSE_CONFIG_SCALE)));
+}
+
+function from_fixed16(value) {
+    return value / MOUSE_CONFIG_SCALE;
+}
+
+function mouse_config_fields(mouse_config) {
+    const merged = { ...DEFAULT_MOUSE_CONFIG, ...(mouse_config || {}) };
+    return [
+        [UINT32, fixed16(merged['tracking_speed'])],
+        [UINT32, fixed16(merged['pointer_resolution'])],
+        [UINT32, fixed16(merged['frame_rate'])],
+        [UINT32, fixed16(merged['fixed_multiplier'])],
+        [UINT32, fixed16(merged['placement_tolerance'])],
+    ];
+}
+
+async function send_report_command(report_id, report_size, command, fields = []) {
+    let buffer = new ArrayBuffer(report_size);
     let dataview = new DataView(buffer);
     dataview.setUint8(0, CONFIG_VERSION);
     dataview.setUint8(1, command);
@@ -365,6 +423,10 @@ async function send_feature_command(command, fields = []) {
                 dataview.setUint8(pos, value);
                 pos += 1;
                 break;
+            case INT8:
+                dataview.setInt8(pos, value);
+                pos += 1;
+                break;
             case UINT32:
                 dataview.setUint32(pos, value, true);
                 pos += 4;
@@ -373,15 +435,27 @@ async function send_feature_command(command, fields = []) {
                 dataview.setInt32(pos, value, true);
                 pos += 4;
                 break;
+            case INT64:
+                dataview.setBigInt64(pos, BigInt(value), true);
+                pos += 8;
+                break;
         }
     }
     add_crc(dataview);
 
-    await device.sendFeatureReport(REPORT_ID_CONFIG, buffer);
+    await device.sendFeatureReport(report_id, buffer);
 }
 
-async function read_config_feature(fields = []) {
-    const data_with_report_id = await device.receiveFeatureReport(REPORT_ID_CONFIG);
+async function send_feature_command(command, fields = []) {
+    await send_report_command(REPORT_ID_CONFIG, CONFIG_SIZE, command, fields);
+}
+
+async function send_runtime_command(command, fields = []) {
+    await send_report_command(REPORT_ID_RUNTIME, RUNTIME_SIZE, command, fields);
+}
+
+async function read_report_feature(report_id, fields = []) {
+    const data_with_report_id = await device.receiveFeatureReport(report_id);
     const data = new DataView(data_with_report_id.buffer, 1);
     check_crc(data);
     let ret = [];
@@ -392,6 +466,10 @@ async function read_config_feature(fields = []) {
                 ret.push(data.getUint8(pos));
                 pos += 1;
                 break;
+            case INT8:
+                ret.push(data.getInt8(pos));
+                pos += 1;
+                break;
             case UINT32:
                 ret.push(data.getUint32(pos, true));
                 pos += 4;
@@ -400,9 +478,21 @@ async function read_config_feature(fields = []) {
                 ret.push(data.getInt32(pos, true));
                 pos += 4;
                 break;
+            case INT64:
+                ret.push(Number(data.getBigInt64(pos, true)));
+                pos += 8;
+                break;
         }
     }
     return ret;
+}
+
+async function read_config_feature(fields = []) {
+    return await read_report_feature(REPORT_ID_CONFIG, fields);
+}
+
+async function read_runtime_feature(fields = []) {
+    return await read_report_feature(REPORT_ID_RUNTIME, fields);
 }
 
 function clear_error() {
@@ -415,13 +505,15 @@ function display_error(message) {
 }
 
 function check_crc(data) {
-    if (data.getUint32(CONFIG_SIZE - 4, true) != crc32(data, CONFIG_SIZE - 4)) {
+    const report_size = data.byteLength;
+    if (data.getUint32(report_size - 4, true) != crc32(data, report_size - 4)) {
         throw new Error('CRC error.');
     }
 }
 
 function add_crc(data) {
-    data.setUint32(CONFIG_SIZE - 4, crc32(data, CONFIG_SIZE - 4), true);
+    const report_size = data.byteLength;
+    data.setUint32(report_size - 4, crc32(data, report_size - 4), true);
 }
 
 function check_version(config_version) {
@@ -549,6 +641,19 @@ function offscreen_sensitivity_onchange() {
     config['offscreen_sensitivity'] = value;
 }
 
+function cursor_placement_interval_onchange() {
+    const value = document.getElementById('cursor_placement_interval_input').value;
+    config['cursor_placement_interval_seconds'] = value === '' ? 0 : parseInt(value, 10);
+}
+
+function mouse_config_onchange() {
+    config['mouse'] = { ...DEFAULT_MOUSE_CONFIG, ...(config['mouse'] || {}) };
+    for (const param of ['tracking_speed', 'pointer_resolution', 'frame_rate', 'fixed_multiplier', 'placement_tolerance']) {
+        const value = document.getElementById('mouse_' + param + '_input').value;
+        config['mouse'][param] = value === '' ? DEFAULT_MOUSE_CONFIG[param] : parseFloat(value);
+    }
+}
+
 function screens_onchange() {
     for (let i = 0; i < 2; i++) {
         for (const param of ['x', 'y', 'w', 'h']) {
@@ -562,6 +667,68 @@ function screens_onchange() {
             value = Math.round(value * 1000);
         }
         config['screens'][i]['sensitivity'] = value;
+    }
+}
+
+async function load_runtime_status() {
+    if (device == null) {
+        return;
+    }
+    clear_error();
+
+    try {
+        await send_runtime_command(GET_RUNTIME_STATUS);
+        const [x, y, active_screen, placement_active, placement_anchor_pending, tracking_speed, pointer_resolution, frame_rate, fixed_multiplier, placement_tolerance] =
+            await read_runtime_feature([INT64, INT64, INT8, UINT8, UINT8, UINT32, UINT32, UINT32, UINT32, UINT32]);
+
+        document.getElementById('runtime_cursor_x_input').value = x;
+        document.getElementById('runtime_cursor_y_input').value = y;
+        document.getElementById('runtime_active_screen_input').value = active_screen;
+        document.getElementById('runtime_status').innerText = 'placement active: ' + !!placement_active + ', anchor pending: ' + !!placement_anchor_pending;
+
+        config['mouse'] = {
+            'tracking_speed': from_fixed16(tracking_speed),
+            'pointer_resolution': from_fixed16(pointer_resolution),
+            'frame_rate': from_fixed16(frame_rate),
+            'fixed_multiplier': from_fixed16(fixed_multiplier),
+            'placement_tolerance': from_fixed16(placement_tolerance),
+        };
+        set_config_ui_state();
+    } catch (e) {
+        display_error(e);
+    }
+}
+
+async function apply_runtime_cursor() {
+    if (device == null) {
+        return;
+    }
+    clear_error();
+
+    try {
+        await send_runtime_command(SET_RUNTIME_HOST_CURSOR, [
+            [INT64, document.getElementById('runtime_cursor_x_input').value || 0],
+            [INT64, document.getElementById('runtime_cursor_y_input').value || 0],
+            [INT8, document.getElementById('runtime_active_screen_input').value || -1],
+        ]);
+        await load_runtime_status();
+    } catch (e) {
+        display_error(e);
+    }
+}
+
+async function apply_runtime_mouse() {
+    if (device == null) {
+        return;
+    }
+    clear_error();
+
+    try {
+        mouse_config_onchange();
+        await send_runtime_command(SET_RUNTIME_MOUSE_CONFIG, mouse_config_fields(config['mouse']));
+        await load_runtime_status();
+    } catch (e) {
+        display_error(e);
     }
 }
 
@@ -590,5 +757,8 @@ function hid_on_disconnect(event) {
         device = null;
         document.getElementById("load_from_device").disabled = true;
         document.getElementById("save_to_device").disabled = true;
+        document.getElementById("load_runtime_status").disabled = true;
+        document.getElementById("apply_runtime_cursor").disabled = true;
+        document.getElementById("apply_runtime_mouse").disabled = true;
     }
 }
