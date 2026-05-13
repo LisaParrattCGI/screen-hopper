@@ -63,6 +63,7 @@ void fill_get_config(get_config_t* config) {
     config->interval_override = interval_override;
     config->constraint_mode = constraint_mode;
     config->offscreen_sensitivity = screens[-1].sensitivity;
+    config->cursor_placement_interval_seconds = cursor_placement_interval_seconds;
 }
 
 void fill_persist_config(persist_config_t* config) {
@@ -179,6 +180,7 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                     }
                     constraint_mode = config->constraint_mode;
                     screens[-1].sensitivity = config->offscreen_sensitivity;
+                    cursor_placement_interval_seconds = config->cursor_placement_interval_seconds;
                     set_mapping_from_config();
                     break;
                 }

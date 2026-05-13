@@ -54,7 +54,8 @@ payload = read_feature(device)
     interval_override,
     constraint_mode,
     offscreen_sensitivity,
-) = struct.unpack_from("<BBLLLLBBL", payload)
+    cursor_placement_interval_seconds,
+) = struct.unpack_from("<BBLLLLBBLL", payload)
 
 if version != CONFIG_VERSION:
     raise Exception("Incompatible version")
@@ -66,6 +67,7 @@ config = {
     "interval_override": interval_override,
     "constraint_mode": constraint_mode,
     "offscreen_sensitivity": offscreen_sensitivity,
+    "cursor_placement_interval_seconds": cursor_placement_interval_seconds,
     "screens": [],
     "mappings": [],
 }

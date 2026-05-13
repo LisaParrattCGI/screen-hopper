@@ -26,6 +26,7 @@ extern volatile bool suspended;
 
 extern bool unmapped_passthrough;
 extern uint32_t partial_scroll_timeout;
+extern uint32_t cursor_placement_interval_seconds;
 extern std::vector<mapping_config_t> config_mappings;
 
 extern uint8_t resolution_multiplier;

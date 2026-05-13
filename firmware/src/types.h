@@ -111,6 +111,7 @@ struct __attribute__((packed)) get_config_t {
     uint8_t interval_override;
     ConstraintMode constraint_mode;
     uint32_t offscreen_sensitivity;
+    uint32_t cursor_placement_interval_seconds;
 };
 
 struct __attribute__((packed)) set_config_t {
@@ -119,6 +120,7 @@ struct __attribute__((packed)) set_config_t {
     uint8_t interval_override;
     ConstraintMode constraint_mode;
     uint32_t offscreen_sensitivity;
+    uint32_t cursor_placement_interval_seconds;
 };
 
 struct __attribute__((packed)) get_indexed_t {
