@@ -28,11 +28,6 @@
 
 #include "our_descriptor.h"
 
-// These IDs are bogus. If you want to distribute any hardware using this,
-// you will have to get real ones.
-#define USB_VID 0xCAFE
-#define USB_PID 0xBAF3
-
 tusb_desc_device_t const desc_device = {
     .bLength = sizeof(tusb_desc_device_t),
     .bDescriptorType = TUSB_DESC_DEVICE,
@@ -42,9 +37,11 @@ tusb_desc_device_t const desc_device = {
     .bDeviceProtocol = 0x00,
     .bMaxPacketSize0 = CFG_TUD_ENDPOINT0_SIZE,
 
-    .idVendor = USB_VID,
-    .idProduct = USB_PID,
-    .bcdDevice = 0x0100,
+    // These IDs are bogus. If you want to distribute any hardware using this,
+    // you will have to get real ones.
+    .idVendor = SCREEN_HOPPER_VENDOR_ID,
+    .idProduct = SCREEN_HOPPER_PRODUCT_ID,
+    .bcdDevice = 0x0101,
 
     .iManufacturer = 0x01,
     .iProduct = 0x02,
@@ -55,13 +52,18 @@ tusb_desc_device_t const desc_device = {
 
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN)
 #define EPNUM_HID 0x81
+#define HID_REPORT_DESC_LEN_OFFSET (TUD_CONFIG_DESC_LEN + 9 + 7)
 
-uint8_t const desc_configuration[] = {
+static_assert(
+    HID_REPORT_DESC_LEN_OFFSET + 1 < CONFIG_TOTAL_LEN,
+    "HID report descriptor length offset is outside the config descriptor");
+
+uint8_t desc_configuration[] = {
     // Config number, interface count, string index, total length, attribute, power in mA
     TUD_CONFIG_DESCRIPTOR(1, 1, 0, CONFIG_TOTAL_LEN, 0, 100),
 
     // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
-    TUD_HID_DESCRIPTOR(0, 0, HID_ITF_PROTOCOL_NONE, our_report_descriptor_length, EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 1)
+    TUD_HID_DESCRIPTOR(0, 0, HID_ITF_PROTOCOL_NONE, 0, EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 1)
 };
 
 char const* string_desc_arr[] = {
@@ -80,6 +82,8 @@ uint8_t const* tud_descriptor_device_cb() {
 // Application return pointer to descriptor
 // Descriptor contents must exist long enough for transfer to complete
 uint8_t const* tud_descriptor_configuration_cb(uint8_t index) {
+    desc_configuration[HID_REPORT_DESC_LEN_OFFSET] = TU_U16_LOW(our_report_descriptor_length);
+    desc_configuration[HID_REPORT_DESC_LEN_OFFSET + 1] = TU_U16_HIGH(our_report_descriptor_length);
     return desc_configuration;
 }
 
