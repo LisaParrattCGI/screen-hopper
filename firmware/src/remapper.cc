@@ -628,7 +628,12 @@ inline bool get_and_clear_tick_pending() {
 }
 
 void sof_handler(uint32_t frame_count) {
+    (void) frame_count;
     tick_pending = true;
+}
+
+extern "C" void tud_sof_cb(uint32_t frame_count) {
+    sof_handler(frame_count);
 }
 
 void forwarder_serial_init() {
@@ -646,7 +651,7 @@ int main() {
     board_init();
     tusb_init();
 
-    tud_sof_isr_set(sof_handler);
+    tud_sof_cb_enable(true);
 
     next_print = time_us_64() + 1000000;
 
