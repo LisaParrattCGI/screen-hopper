@@ -6,7 +6,7 @@
 #define SCREEN_HOPPER_VENDOR_ID 0xCAFE
 #define SCREEN_HOPPER_PRODUCT_ID 0xBAF3
 
-#define CONFIG_VERSION 5
+#define CONFIG_VERSION 6
 #define CONFIG_SIZE 60
 
 #define REPORT_ID_MULTIPLIER 99
@@ -107,6 +107,8 @@ struct __attribute__((packed)) persist_config_t {
     uint8_t interval_override;
     ConstraintMode constraint_mode;
     uint32_t offscreen_sensitivity;
+    uint32_t cursor_placement_interval_seconds;
+    macos_mouse_config_t mouse_config;
     screen_def_t screens[NSCREENS];
 };
 
