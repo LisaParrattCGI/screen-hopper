@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 
-import binascii
-import json
-import struct
-
 import hid
+import binascii
+import struct
+import json
 
 from hid_protocol import (
     CONFIG_COMMAND_GET_CONFIG as GET_CONFIG,
@@ -13,9 +12,11 @@ from hid_protocol import (
     CONFIG_SIZE,
     CONFIG_VERSION,
     MOUSE_CONFIG_SCALE,
+    PRODUCT_ID,
     REPORT_ID_CONFIG,
     SCREEN_COUNT,
     UNMAPPED_PASSTHROUGH_FLAG,
+    VENDOR_ID,
     open_config_device,
     read_feature_payload,
 )
@@ -116,5 +117,6 @@ for i in range(SCREEN_COUNT):
             "sensitivity": sensitivity,
         }
     )
+
 
 print(json.dumps(config, indent=2))

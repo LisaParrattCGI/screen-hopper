@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 
-import binascii
-import json
-import struct
-
 import hid
+import binascii
+import struct
+import json
 
 from hid_protocol import (
     CONFIG_COMMAND_GET_CONFIG as GET_CONFIG,
@@ -12,7 +11,9 @@ from hid_protocol import (
     CONFIG_COMMAND_GET_THEIR_USAGES as GET_THEIR_USAGES,
     CONFIG_SIZE,
     CONFIG_VERSION,
+    PRODUCT_ID,
     REPORT_ID_CONFIG,
+    VENDOR_ID,
     open_config_device,
     read_feature_payload,
 )
