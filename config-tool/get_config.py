@@ -12,12 +12,17 @@ from hid_protocol import (
     CONFIG_COMMAND_GET_SCREEN as GET_SCREEN,
     CONFIG_SIZE,
     CONFIG_VERSION,
+    MOUSE_CONFIG_SCALE,
     REPORT_ID_CONFIG,
     SCREEN_COUNT,
     UNMAPPED_PASSTHROUGH_FLAG,
     open_config_device,
     read_feature_payload,
 )
+
+
+def from_fixed16(value):
+    return value / MOUSE_CONFIG_SCALE
 
 
 def feature_report(command, payload=b""):
@@ -55,7 +60,12 @@ payload = read_feature(device)
     constraint_mode,
     offscreen_sensitivity,
     cursor_placement_interval_seconds,
-) = struct.unpack_from("<BBLLLLBBLL", payload)
+    tracking_speed,
+    pointer_resolution,
+    frame_rate,
+    fixed_multiplier,
+    placement_tolerance,
+) = struct.unpack_from("<BBLLLLBBLL5L", payload)
 
 if version != CONFIG_VERSION:
     raise Exception("Incompatible version")
@@ -68,6 +78,13 @@ config = {
     "constraint_mode": constraint_mode,
     "offscreen_sensitivity": offscreen_sensitivity,
     "cursor_placement_interval_seconds": cursor_placement_interval_seconds,
+    "mouse": {
+        "tracking_speed": from_fixed16(tracking_speed),
+        "pointer_resolution": from_fixed16(pointer_resolution),
+        "frame_rate": from_fixed16(frame_rate),
+        "fixed_multiplier": from_fixed16(fixed_multiplier),
+        "placement_tolerance": from_fixed16(placement_tolerance),
+    },
     "screens": [],
     "mappings": [],
 }

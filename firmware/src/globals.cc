@@ -30,3 +30,11 @@ std::unordered_map<int8_t, screen_def_t> screens = {
 };
 
 ConstraintMode constraint_mode = ConstraintMode::VISIBLE;
+
+macos_pointer_acceleration_settings_t macos_pointer_acceleration = {
+    .tracking_speed = 0.6875,
+    .pointer_resolution = 400.0,
+    .frame_rate = 67.0,
+    .fixed_multiplier = 1.0,
+};
+double macos_placement_tolerance = 0.5;
