@@ -1,3 +1,7 @@
+#include <algorithm>
+#include <cmath>
+#include <inttypes.h>
+#include <limits>
 #include <set>
 #include <unordered_map>
 #include <unordered_set>
@@ -13,15 +17,16 @@
 #include "config.h"
 #include "crc.h"
 #include "descriptor_parser.h"
+#include "forwarder_control.h"
 #include "globals.h"
+#include "macos_pointer_acceleration.h"
 #include "our_descriptor.h"
 #include "remapper.h"
 #include "serial.h"
+#include "status_led.h"
 
 #define FORWARDER_UART uart1
 #define FORWARDER_TX_PIN 20
-
-const uint8_t MAPPING_FLAG_STICKY = 0x01;
 
 const uint8_t V_RESOLUTION_BITMASK = (1 << 0);
 const uint8_t H_RESOLUTION_BITMASK = (1 << 2);
@@ -57,6 +62,7 @@ uint16_t report_sizes[MAX_INPUT_REPORT_ID + 1];
 
 #define OR_BUFSIZE 8
 uint8_t outgoing_reports[OR_BUFSIZE][CFG_TUD_HID_EP_BUFSIZE + 2];
+bool outgoing_reports_mergeable[OR_BUFSIZE];
 uint8_t or_head = 0;
 uint8_t or_tail = 0;
 uint8_t or_items = 0;
@@ -85,9 +91,14 @@ bool led_state;
 uint64_t next_print = 0;
 uint32_t reports_received;
 uint32_t reports_sent;
+uint64_t next_periodic_cursor_placement = 0;
+uint32_t scheduled_cursor_placement_interval_seconds = 0;
+int8_t displayed_active_screen = -2;
 
 int64_t cursor_x = 0;
 int64_t cursor_y = 0;
+double cursor_fraction_x = 0.0;
+double cursor_fraction_y = 0.0;
 
 int8_t active_screen = 0;
 
@@ -95,6 +106,44 @@ int64_t bounds_min_x;
 int64_t bounds_max_x;
 int64_t bounds_min_y;
 int64_t bounds_max_y;
+
+struct cursor_placement_t {
+    bool active;
+    bool anchor_pending;
+    int8_t screen;
+    double predicted_x;
+    double predicted_y;
+    double target_x;
+    double target_y;
+};
+
+cursor_placement_t cursor_placement = {};
+
+int64_t consume_fractional_cursor_delta(double delta, double& fraction) {
+    fraction += delta;
+    int64_t whole = (int64_t) std::trunc(fraction);
+    fraction -= (double) whole;
+    return whole;
+}
+
+int64_t consume_scaled_axis_movement(uint32_t usage, uint32_t sensitivity) {
+    if (sensitivity == 0) {
+        return 0;
+    }
+
+    int32_t raw_accumulated = accumulated[usage];
+    int64_t delta = (int64_t) raw_accumulated * sensitivity / 1000;
+    if (delta == 0) {
+        return 0;
+    }
+
+    int64_t consumed = delta * 1000 / sensitivity;
+    if (consumed == 0) {
+        consumed = raw_accumulated > 0 ? 1 : -1;
+    }
+    accumulated[usage] -= (int32_t) consumed;
+    return delta;
+}
 
 int32_t handle_scroll(uint32_t source_usage, uint32_t target_usage, int32_t movement) {
     int32_t ret = 0;
@@ -149,6 +198,97 @@ inline void put_bits(uint8_t* data, int len, uint16_t bitpos, uint8_t size, uint
     }
 }
 
+int16_t clamp_relative_axis(int64_t value) {
+    if (value > std::numeric_limits<int16_t>::max()) {
+        return std::numeric_limits<int16_t>::max();
+    }
+    if (value < std::numeric_limits<int16_t>::min()) {
+        return std::numeric_limits<int16_t>::min();
+    }
+    return (int16_t) value;
+}
+
+double abs_double(double value) {
+    return value < 0.0 ? -value : value;
+}
+
+double clamp_double(double value, double low, double high) {
+    return std::max(low, std::min(value, high));
+}
+
+template <typename T>
+void copy_set_to_vector(const std::unordered_set<T>& input, std::vector<T>& output) {
+    output.clear();
+    output.reserve(input.size());
+    for (T value : input) {
+        output.push_back(value);
+    }
+}
+
+void send_forwarder_active_status(bool active) {
+    forwarder_control_t msg = {
+        .report_id = FORWARDER_CONTROL_REPORT_ID,
+        .command = FORWARDER_CONTROL_SET_ACTIVE,
+        .value = active ? (uint8_t) 1 : (uint8_t) 0,
+    };
+    serial_write((const uint8_t*) &msg, sizeof(msg), FORWARDER_UART);
+}
+
+void update_active_screen_leds() {
+    if (displayed_active_screen == active_screen) {
+        return;
+    }
+
+    displayed_active_screen = active_screen;
+    status_led_set_red(active_screen == 0);
+    send_forwarder_active_status(active_screen > 0);
+}
+
+bool queue_outgoing_report(int8_t target_screen, uint8_t report_id, const uint8_t* report, bool mergeable) {
+    if (or_items == OR_BUFSIZE) {
+        printf("overflow!\n");
+        return false;
+    }
+
+    outgoing_reports[or_tail][0] = (uint8_t) target_screen;
+    outgoing_reports[or_tail][1] = report_id;
+    outgoing_reports_mergeable[or_tail] = mergeable;
+    memcpy(outgoing_reports[or_tail] + 2, report, report_sizes[report_id]);
+    or_tail = (or_tail + 1) % OR_BUFSIZE;
+    or_items++;
+    return true;
+}
+
+usage_def_t& our_usage_for_report(uint8_t report_id, uint32_t usage) {
+    return our_usages[report_id][usage];
+}
+
+bool queue_mouse_absolute(int8_t target_screen, int32_t x, int32_t y) {
+    usage_def_t& our_usage_x = our_usage_for_report(REPORT_ID_MOUSE, MOUSE_X_USAGE);
+    usage_def_t& our_usage_y = our_usage_for_report(REPORT_ID_MOUSE, MOUSE_Y_USAGE);
+
+    uint8_t temp_report[CFG_TUD_HID_EP_BUFSIZE];
+    memset(temp_report, 0, report_sizes[REPORT_ID_MOUSE]);
+
+    put_bits(temp_report, report_sizes[REPORT_ID_MOUSE], our_usage_x.bitpos, our_usage_x.size, (uint32_t) x);
+    put_bits(temp_report, report_sizes[REPORT_ID_MOUSE], our_usage_y.bitpos, our_usage_y.size, (uint32_t) y);
+
+    return queue_outgoing_report(target_screen, REPORT_ID_MOUSE, temp_report, false);
+}
+
+bool queue_mouse_relative(int8_t target_screen, int16_t dx, int16_t dy, bool mergeable) {
+    usage_def_t& our_usage_x = our_usage_for_report(REPORT_ID_MOUSE_RELATIVE, MOUSE_X_USAGE);
+    usage_def_t& our_usage_y = our_usage_for_report(REPORT_ID_MOUSE_RELATIVE, MOUSE_Y_USAGE);
+
+    uint8_t temp_report[CFG_TUD_HID_EP_BUFSIZE];
+    memset(temp_report, 0, report_sizes[REPORT_ID_MOUSE_RELATIVE]);
+
+    put_bits(temp_report, report_sizes[REPORT_ID_MOUSE_RELATIVE], our_usage_x.bitpos, our_usage_x.size, (uint16_t) dx);
+    put_bits(temp_report, report_sizes[REPORT_ID_MOUSE_RELATIVE], our_usage_y.bitpos, our_usage_y.size, (uint16_t) dy);
+
+    return queue_outgoing_report(target_screen, REPORT_ID_MOUSE_RELATIVE, temp_report, mergeable);
+}
+
 bool needs_to_be_sent(uint8_t report_id) {
     uint8_t* report = reports[report_id];
     uint8_t* prev_report = prev_reports[report_id];
@@ -172,7 +312,7 @@ void set_mapping_from_config() {
     reverse_mapping.clear();
 
     for (auto const& mapping : config_mappings) {
-        reverse_mapping[mapping.target_usage].push_back((map_source_t){
+        reverse_mapping[mapping.target_usage].push_back((map_source_t) {
             .usage = mapping.source_usage,
             .scaling = mapping.scaling,
             .sticky = (mapping.flags & MAPPING_FLAG_STICKY) != 0,
@@ -193,14 +333,14 @@ void set_mapping_from_config() {
         }
     }
 
-    layer_triggering_stickies.assign(layer_triggering_sticky_set.begin(), layer_triggering_sticky_set.end());
-    sticky_usages.assign(sticky_usage_set.begin(), sticky_usage_set.end());
-    screen_switching_usages.assign(screen_switching_usages_set.begin(), screen_switching_usages_set.end());
+    copy_set_to_vector(layer_triggering_sticky_set, layer_triggering_stickies);
+    copy_set_to_vector(sticky_usage_set, sticky_usages);
+    copy_set_to_vector(screen_switching_usages_set, screen_switching_usages);
 
     if (unmapped_passthrough) {
         for (auto const& [usage, usage_def] : our_usages_flat) {
             if (!mapped.count(usage)) {
-                reverse_mapping[usage].push_back((map_source_t){ .usage = usage });
+                reverse_mapping[usage].push_back((map_source_t) { .usage = usage });
             }
         }
     }
@@ -220,6 +360,10 @@ void screens_updated() {
 
     cursor_x = screens[0].x + screens[0].w / 2;
     cursor_y = screens[0].y + screens[0].h / 2;
+    cursor_fraction_x = 0.0;
+    cursor_fraction_y = 0.0;
+    cursor_placement.active = false;
+    cursor_placement.anchor_pending = false;
     active_screen = 0;
 }
 
@@ -272,11 +416,142 @@ bool within_bounds(int64_t x, int64_t y, int8_t& active_screen) {
 
     return ((constraint_mode == ConstraintMode::VISIBLE && active_screen != -1) ||
             (constraint_mode == ConstraintMode::BOUNDING_BOX &&
-                x >= bounds_min_x &&
-                x < bounds_max_x &&
-                y >= bounds_min_y &&
-                y < bounds_max_y) ||
+             x >= bounds_min_x &&
+             x < bounds_max_x &&
+             y >= bounds_min_y &&
+             y < bounds_max_y) ||
             (constraint_mode == ConstraintMode::NO_CONSTRAINT));
+}
+
+void update_cursor_placement_target() {
+    if ((!cursor_placement.active && !cursor_placement.anchor_pending) || cursor_placement.screen < 0) {
+        return;
+    }
+
+    const screen_def_t& screen = screens[cursor_placement.screen];
+    double local_x = (double) cursor_x - (double) screen.x;
+    double local_y = (double) cursor_y - (double) screen.y;
+
+    cursor_placement.target_x = clamp_double(local_x, 0.0, (double) screen.w - 1.0);
+    cursor_placement.target_y = clamp_double(local_y, 0.0, (double) screen.h - 1.0);
+}
+
+void start_cursor_placement(int8_t screen) {
+    cursor_placement.active = false;
+    cursor_placement.anchor_pending = true;
+    cursor_placement.screen = screen;
+    cursor_placement.predicted_x = 0.0;
+    cursor_placement.predicted_y = 0.0;
+    cursor_placement.target_x = 0.0;
+    cursor_placement.target_y = 0.0;
+    update_cursor_placement_target();
+}
+
+uint64_t cursor_placement_interval_us() {
+    return (uint64_t) cursor_placement_interval_seconds * 1000000;
+}
+
+void schedule_periodic_cursor_placement(uint64_t now) {
+    scheduled_cursor_placement_interval_seconds = cursor_placement_interval_seconds;
+    next_periodic_cursor_placement = now + cursor_placement_interval_us();
+}
+
+bool periodic_cursor_placement_due() {
+    uint64_t now = time_us_64();
+    if (cursor_placement_interval_seconds == 0) {
+        next_periodic_cursor_placement = 0;
+        scheduled_cursor_placement_interval_seconds = 0;
+        return false;
+    }
+
+    if (scheduled_cursor_placement_interval_seconds != cursor_placement_interval_seconds ||
+        next_periodic_cursor_placement == 0) {
+        schedule_periodic_cursor_placement(now);
+        return false;
+    }
+
+    if (now < next_periodic_cursor_placement) {
+        return false;
+    }
+
+    schedule_periodic_cursor_placement(now);
+    return active_screen != -1 && !cursor_placement.active && !cursor_placement.anchor_pending;
+}
+
+double predicted_placement_axis_delta(int16_t raw_delta, bool x_axis) {
+    macos_delta_t accelerated = x_axis
+                                    ? apply_macos_acceleration(raw_delta, 0, macos_pointer_acceleration)
+                                    : apply_macos_acceleration(0, raw_delta, macos_pointer_acceleration);
+    return x_axis ? accelerated.dx : accelerated.dy;
+}
+
+int16_t choose_placement_axis_step(double remaining, bool x_axis) {
+    if (abs_double(remaining) <= macos_placement_tolerance) {
+        return 0;
+    }
+
+    int sign = remaining > 0.0 ? 1 : -1;
+    int16_t best_step = 0;
+    double best_error = abs_double(remaining);
+    int16_t max_step = macos_max_first_segment_raw_delta(macos_pointer_acceleration);
+
+    for (int magnitude = 1; magnitude <= max_step; magnitude++) {
+        int16_t step = (int16_t) (sign * magnitude);
+        double predicted = predicted_placement_axis_delta(step, x_axis);
+        double error = abs_double(remaining - predicted);
+        if (error < best_error) {
+            best_error = error;
+            best_step = step;
+        }
+    }
+
+    return best_step;
+}
+
+void emit_cursor_placement_reports() {
+    if (!cursor_placement.active && !cursor_placement.anchor_pending) {
+        return;
+    }
+
+    if (cursor_placement.anchor_pending) {
+        if (!queue_mouse_absolute(cursor_placement.screen, 0, 0)) {
+            return;
+        }
+        cursor_placement.anchor_pending = false;
+        cursor_placement.active = true;
+    }
+
+    while (cursor_placement.active && or_items < OR_BUFSIZE - 1) {
+        double remaining_x = cursor_placement.target_x - cursor_placement.predicted_x;
+        double remaining_y = cursor_placement.target_y - cursor_placement.predicted_y;
+
+        if (abs_double(remaining_x) <= macos_placement_tolerance &&
+            abs_double(remaining_y) <= macos_placement_tolerance) {
+            cursor_placement.active = false;
+            break;
+        }
+
+        bool use_x = abs_double(remaining_x) >= abs_double(remaining_y);
+        int16_t dx = use_x ? choose_placement_axis_step(remaining_x, true) : 0;
+        int16_t dy = use_x ? 0 : choose_placement_axis_step(remaining_y, false);
+
+        if (dx == 0 && dy == 0) {
+            dx = choose_placement_axis_step(remaining_x, true);
+            dy = dx == 0 ? choose_placement_axis_step(remaining_y, false) : 0;
+        }
+        if (dx == 0 && dy == 0) {
+            cursor_placement.active = false;
+            break;
+        }
+
+        if (!queue_mouse_relative(cursor_placement.screen, dx, dy, false)) {
+            break;
+        }
+
+        macos_delta_t accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
+        cursor_placement.predicted_x += accelerated.dx;
+        cursor_placement.predicted_y += accelerated.dy;
+    }
 }
 
 runtime_cursor_t get_runtime_cursor() {
@@ -288,22 +563,28 @@ runtime_cursor_t get_runtime_cursor() {
 }
 
 void get_runtime_placement_flags(uint8_t& placement_active, uint8_t& placement_anchor_pending) {
-    placement_active = 0;
-    placement_anchor_pending = 0;
+    placement_active = cursor_placement.active ? 1 : 0;
+    placement_anchor_pending = cursor_placement.anchor_pending ? 1 : 0;
 }
 
 void set_cursor_from_host(const runtime_cursor_t& cursor) {
     cursor_x = cursor.x;
     cursor_y = cursor.y;
+    cursor_fraction_x = 0.0;
+    cursor_fraction_y = 0.0;
+    cursor_placement.active = false;
+    cursor_placement.anchor_pending = false;
 
     if (cursor.active_screen >= 0 && cursor.active_screen < NSCREENS) {
         active_screen = cursor.active_screen;
+        update_active_screen_leds();
         return;
     }
 
     int8_t derived_active_screen = -1;
     within_bounds(cursor_x, cursor_y, derived_active_screen);
     active_screen = derived_active_screen;
+    update_active_screen_leds();
 }
 
 void process_mapping(bool auto_repeat) {
@@ -344,6 +625,7 @@ void process_mapping(bool auto_repeat) {
         prev_input_state[usage] = input_state[usage];
     }
 
+    bool manual_screen_changed = false;
     for (auto const& layer_usage : screen_switching_usages) {
         uint32_t usage = layer_usage & 0xFFFFFFFF;
         uint32_t layer = layer_usage >> 32;
@@ -352,6 +634,9 @@ void process_mapping(bool auto_repeat) {
                 active_screen = (active_screen + 1) % NSCREENS;
                 cursor_x = screens[active_screen].x + screens[active_screen].w / 2;
                 cursor_y = screens[active_screen].y + screens[active_screen].h / 2;
+                cursor_fraction_x = 0.0;
+                cursor_fraction_y = 0.0;
+                manual_screen_changed = true;
             }
         }
         prev_input_state[usage] = input_state[usage];
@@ -373,8 +658,8 @@ void process_mapping(bool auto_repeat) {
                     } else {
                         if (layer_state[map_source.layer]) {
                             value = (source_is_relative
-                                            ? input_state[map_source.usage]
-                                            : !!input_state[map_source.usage]) *
+                                         ? input_state[map_source.usage]
+                                         : !!input_state[map_source.usage]) *
                                     map_source.scaling;
                         }
                     }
@@ -395,8 +680,8 @@ void process_mapping(bool auto_repeat) {
                 } else {
                     if ((layer_state[map_source.layer]) &&
                         (relative_usage_set.count(map_source.usage)
-                                ? (input_state[map_source.usage] * map_source.scaling > 0)
-                                : input_state[map_source.usage])) {
+                             ? (input_state[map_source.usage] * map_source.scaling > 0)
+                             : input_state[map_source.usage])) {
                         value = 1;
                     }
                 }
@@ -411,46 +696,86 @@ void process_mapping(bool auto_repeat) {
         input_state[usage] = 0;
     }
 
-    int64_t dx = (int64_t) accumulated[MOUSE_X_USAGE] * screens[active_screen].sensitivity / 1000;
-    int64_t new_cursor_x = cursor_x + dx;
-    int64_t dy = (int64_t) accumulated[MOUSE_Y_USAGE] * screens[active_screen].sensitivity / 1000;
-    int64_t new_cursor_y = cursor_y + dy;
-    accumulated[MOUSE_X_USAGE] -= dx;
-    accumulated[MOUSE_Y_USAGE] -= dy;
+    int64_t dx = consume_scaled_axis_movement(MOUSE_X_USAGE, screens[active_screen].sensitivity);
+    int64_t dy = consume_scaled_axis_movement(MOUSE_Y_USAGE, screens[active_screen].sensitivity);
+
+    // Apple accelerates the vector magnitude once, then applies that scalar to both axes.
+    macos_delta_t accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
+    int64_t accelerated_dx = consume_fractional_cursor_delta(accelerated.dx, cursor_fraction_x);
+    int64_t accelerated_dy = consume_fractional_cursor_delta(accelerated.dy, cursor_fraction_y);
+
+    int64_t new_cursor_x = cursor_x + accelerated_dx;
+    int64_t new_cursor_y = cursor_y + accelerated_dy;
 
     int8_t new_active_screen;
+    bool screen_changed = manual_screen_changed;
     if (within_bounds(new_cursor_x, new_cursor_y, new_active_screen)) {
         cursor_x = new_cursor_x;
         cursor_y = new_cursor_y;
+        if (new_active_screen != active_screen) {
+            screen_changed = true;
+        }
         active_screen = new_active_screen;
     } else if (within_bounds(cursor_x, new_cursor_y, new_active_screen)) {  // so that the cursor doesn't snag on screen edges
         cursor_y = new_cursor_y;
+        if (new_active_screen != active_screen) {
+            screen_changed = true;
+        }
         active_screen = new_active_screen;
     } else if (within_bounds(new_cursor_x, cursor_y, new_active_screen)) {
         cursor_x = new_cursor_x;
+        if (new_active_screen != active_screen) {
+            screen_changed = true;
+        }
         active_screen = new_active_screen;
     }
 
-    if (active_screen != -1) {
-        int64_t local_x = (cursor_x - screens[active_screen].x) * 32768 / screens[active_screen].w;
-        int64_t local_y = (cursor_y - screens[active_screen].y) * 32768 / screens[active_screen].h;
+    bool movement_absorbed_by_placement = false;
 
-        {
-            usage_def_t& our_usage = our_usages_flat[MOUSE_X_USAGE];
-            put_bits((uint8_t*) reports[our_usage.report_id], report_sizes[our_usage.report_id], our_usage.bitpos, our_usage.size, local_x);
-        }
-        {
-            usage_def_t& our_usage = our_usages_flat[MOUSE_Y_USAGE];
-            put_bits((uint8_t*) reports[our_usage.report_id], report_sizes[our_usage.report_id], our_usage.bitpos, our_usage.size, local_y);
-        }
+    // If the target host changes, anchor at its absolute origin and then place
+    // the cursor with small relative packets. Those packets are deliberately not
+    // mergeable; a merged packet would be accelerated as one larger movement.
+    bool periodic_placement_due = periodic_cursor_placement_due();
+
+    if (screen_changed && active_screen != -1) {
+        cursor_fraction_x = 0.0;
+        cursor_fraction_y = 0.0;
+        start_cursor_placement(active_screen);
+        movement_absorbed_by_placement = true;
+    } else if ((cursor_placement.active || cursor_placement.anchor_pending) && active_screen == cursor_placement.screen) {
+        update_cursor_placement_target();
+        movement_absorbed_by_placement = true;
+    } else if (periodic_placement_due) {
+        cursor_fraction_x = 0.0;
+        cursor_fraction_y = 0.0;
+        start_cursor_placement(active_screen);
+        movement_absorbed_by_placement = true;
+    } else if (cursor_placement.active || cursor_placement.anchor_pending) {
+        cursor_placement.active = false;
+        cursor_placement.anchor_pending = false;
     }
 
+    emit_cursor_placement_reports();
+
+    // Prepare relative movement report (always use REPORT_ID_MOUSE_RELATIVE for cursor movement)
+    // Send raw dx/dy (not accelerated) - macOS will apply its own acceleration
+    if (active_screen != -1 && !movement_absorbed_by_placement && (dx != 0 || dy != 0)) {
+        queue_mouse_relative(active_screen, clamp_relative_axis(dx), clamp_relative_axis(dy), true);
+    }
+
+    // Handle buttons and scrolling via REPORT_ID_MOUSE_RELATIVE
     for (auto& [usage, accumulated_val] : accumulated) {
         if (accumulated_val == 0) {
             continue;
         }
+
+        // Only process scroll/button usages, not X/Y
+        if (usage == MOUSE_X_USAGE || usage == MOUSE_Y_USAGE) {
+            continue;
+        }
+
         usage_def_t& our_usage = our_usages_flat[usage];
-        int32_t existing_val = get_bits((uint8_t*) reports[our_usage.report_id], report_sizes[our_usage.report_id], our_usage.bitpos, our_usage.size);
+        int32_t existing_val = get_bits((uint8_t*) reports[REPORT_ID_MOUSE_RELATIVE], report_sizes[REPORT_ID_MOUSE_RELATIVE], our_usage.bitpos, our_usage.size);
         if (our_usage.logical_minimum < 0) {
             if (existing_val & (1 << (our_usage.size - 1))) {
                 existing_val |= 0xFFFFFFFF << our_usage.size;
@@ -459,12 +784,36 @@ void process_mapping(bool auto_repeat) {
         int32_t truncated = accumulated_val / 1000;
         accumulated_val -= truncated * 1000;
         if (truncated != 0) {
-            put_bits((uint8_t*) reports[our_usage.report_id], report_sizes[our_usage.report_id], our_usage.bitpos, our_usage.size, existing_val + truncated);
+            put_bits((uint8_t*) reports[REPORT_ID_MOUSE_RELATIVE], report_sizes[REPORT_ID_MOUSE_RELATIVE], our_usage.bitpos, our_usage.size, existing_val + truncated);
         }
     }
 
-    for (uint i = 0; i < report_ids.size(); i++) {  // XXX what order should we go in? maybe keyboard first so that mappings to ctrl-left click work as expected?
+    // Send any pending button/scroll reports via REPORT_ID_MOUSE_RELATIVE
+    if ((active_screen != -1) && needs_to_be_sent(REPORT_ID_MOUSE_RELATIVE)) {
+        if (or_items == OR_BUFSIZE) {
+            printf("overflow!\n");
+        } else {
+            uint8_t prev = (or_tail + OR_BUFSIZE - 1) % OR_BUFSIZE;
+            if ((or_items > 0) &&
+                outgoing_reports_mergeable[prev] &&
+                (outgoing_reports[prev][0] == active_screen) &&
+                (outgoing_reports[prev][1] == REPORT_ID_MOUSE_RELATIVE) &&
+                !differ_on_absolute(outgoing_reports[prev] + 2, reports[REPORT_ID_MOUSE_RELATIVE], REPORT_ID_MOUSE_RELATIVE)) {
+                aggregate_relative(outgoing_reports[prev] + 2, reports[REPORT_ID_MOUSE_RELATIVE], REPORT_ID_MOUSE_RELATIVE);
+            } else {
+                if (queue_outgoing_report(active_screen, REPORT_ID_MOUSE_RELATIVE, reports[REPORT_ID_MOUSE_RELATIVE], true)) {
+                    memcpy(prev_reports[REPORT_ID_MOUSE_RELATIVE], reports[REPORT_ID_MOUSE_RELATIVE], report_sizes[REPORT_ID_MOUSE_RELATIVE]);
+                }
+            }
+        }
+    }
+
+    // Send keyboard and consumer reports (non-mouse)
+    for (uint i = 0; i < report_ids.size(); i++) {
         uint8_t report_id = report_ids[i];
+        if (report_id == REPORT_ID_MOUSE || report_id == REPORT_ID_MOUSE_RELATIVE) {
+            continue;
+        }
         if ((active_screen != -1) && needs_to_be_sent(report_id)) {
             if (or_items == OR_BUFSIZE) {
                 printf("overflow!\n");
@@ -472,21 +821,24 @@ void process_mapping(bool auto_repeat) {
             }
             uint8_t prev = (or_tail + OR_BUFSIZE - 1) % OR_BUFSIZE;
             if ((or_items > 0) &&
+                outgoing_reports_mergeable[prev] &&
                 (outgoing_reports[prev][0] == active_screen) &&
                 (outgoing_reports[prev][1] == report_id) &&
                 !differ_on_absolute(outgoing_reports[prev] + 2, reports[report_id], report_id)) {
                 aggregate_relative(outgoing_reports[prev] + 2, reports[report_id], report_id);
             } else {
-                outgoing_reports[or_tail][0] = active_screen;
-                outgoing_reports[or_tail][1] = report_id;
-                memcpy(outgoing_reports[or_tail] + 2, reports[report_id], report_sizes[report_id]);
-                memcpy(prev_reports[report_id], reports[report_id], report_sizes[report_id]);
-                or_tail = (or_tail + 1) % OR_BUFSIZE;
-                or_items++;
+                if (queue_outgoing_report(active_screen, report_id, reports[report_id], true)) {
+                    memcpy(prev_reports[report_id], reports[report_id], report_sizes[report_id]);
+                }
             }
         }
         memset(reports[report_id], 0, report_sizes[report_id]);
     }
+
+    memset(reports[REPORT_ID_MOUSE], 0, report_sizes[REPORT_ID_MOUSE]);
+    memset(reports[REPORT_ID_MOUSE_RELATIVE], 0, report_sizes[REPORT_ID_MOUSE_RELATIVE]);
+
+    update_active_screen_leds();
 }
 
 void send_report() {
@@ -498,7 +850,9 @@ void send_report() {
     uint8_t report_id = outgoing_reports[or_head][1];
 
     if (target_screen == 0) {
-        tud_hid_report(report_id, outgoing_reports[or_head] + 2, report_sizes[report_id]);
+        if (tud_hid_report(report_id, outgoing_reports[or_head] + 2, report_sizes[report_id])) {
+            status_led_flash_green();
+        }
     } else {
         serial_write(outgoing_reports[or_head] + 1, report_sizes[report_id] + 1, FORWARDER_UART);
     }
@@ -621,7 +975,9 @@ void parse_our_descriptor() {
     std::set<uint32_t> our_usages_set;
     for (auto const& [report_id, usage_map] : our_usages) {
         for (auto const& [usage, usage_def] : usage_map) {
-            our_usages_flat[usage] = usage_def;
+            if (!our_usages_flat.count(usage) || report_id == REPORT_ID_MOUSE_RELATIVE) {
+                our_usages_flat[usage] = usage_def;
+            }
             our_usages_set.insert(usage);
 
             if (usage_def.is_relative) {
@@ -638,7 +994,7 @@ void parse_our_descriptor() {
 void print_stats() {
     uint64_t now = time_us_64();
     if (now > next_print) {
-        printf("%ld %ld\n", reports_received, reports_sent);
+        printf("%" PRIu32 " %" PRIu32 "\n", reports_received, reports_sent);
         reports_received = 0;
         reports_sent = 0;
         while (next_print < now) {
@@ -676,6 +1032,8 @@ int main() {
     parse_our_descriptor();
     load_config();
     board_init();
+    status_led_init();
+    update_active_screen_leds();
     tusb_init();
 
     tud_sof_cb_enable(true);
@@ -704,6 +1062,7 @@ int main() {
         }
 
         print_stats();
+        status_led_task();
     }
 
     return 0;
