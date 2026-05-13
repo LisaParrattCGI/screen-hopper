@@ -23,7 +23,7 @@ add_compile_options(-Wall -Wno-array-bounds -Wno-psabi)
 
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-std=c++17>)
 
-add_executable(screenhopper src/remapper.cc src/remapper_single.cc ${OUR_PIO_USB_PATH}/pio_usb.c ${OUR_PIO_USB_PATH}/usb_crc.c src/crc.cc src/descriptor_parser.cc src/pio_usb_stuff.cc src/tinyusb_stuff.cc src/our_descriptor.cc src/globals.cc src/config.cc src/quirks.cc src/interval_override.cc src/serial.cc src/status_led_noop.cc)
+add_executable(screenhopper src/remapper.cc src/remapper_single.cc ${OUR_PIO_USB_PATH}/pio_usb.c ${OUR_PIO_USB_PATH}/usb_crc.c src/crc.cc src/descriptor_parser.cc src/pio_usb_stuff.cc src/tinyusb_stuff.cc src/our_descriptor.cc src/macos_pointer_acceleration.cc src/globals.cc src/config.cc src/quirks.cc src/interval_override.cc src/serial.cc src/status_led_noop.cc)
 
 target_include_directories(screenhopper PRIVATE src src/tusb_config_device ${OUR_PIO_USB_PATH} ${GENERATED_PIO_HEADERS_PATH})
 
@@ -37,7 +37,7 @@ target_include_directories(forwarder PRIVATE src src/tusb_config_device ${GENERA
 target_link_libraries(forwarder pico_stdlib hardware_pio hardware_clocks tinyusb_device tinyusb_board)
 pico_add_extra_outputs(forwarder)
 
-add_executable(screenhopper_a src/remapper.cc src/remapper_dual_a.cc src/crc.cc src/descriptor_parser.cc src/tinyusb_stuff.cc src/our_descriptor.cc src/globals.cc src/config.cc src/quirks.cc src/interval_override.cc src/serial.cc src/status_led.cc)
+add_executable(screenhopper_a src/remapper.cc src/remapper_dual_a.cc src/crc.cc src/descriptor_parser.cc src/tinyusb_stuff.cc src/our_descriptor.cc src/macos_pointer_acceleration.cc src/globals.cc src/config.cc src/quirks.cc src/interval_override.cc src/serial.cc src/status_led.cc)
 target_include_directories(screenhopper_a PRIVATE src src/tusb_config_device ${GENERATED_PIO_HEADERS_PATH})
 target_link_libraries(screenhopper_a pico_stdlib hardware_flash hardware_pio hardware_clocks tinyusb_device tinyusb_board)
 pico_add_extra_outputs(screenhopper_a)
