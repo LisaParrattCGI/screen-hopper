@@ -41,6 +41,7 @@ int main() {
         serial_read(serial_callback);
     }
 
+    tuh_hid_set_default_protocol(HID_PROTOCOL_REPORT);
     tusb_init();
 
     while (true) {
