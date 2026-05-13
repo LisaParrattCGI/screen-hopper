@@ -6,8 +6,8 @@
 #define SCREEN_HOPPER_VENDOR_ID 0xCAFE
 #define SCREEN_HOPPER_PRODUCT_ID 0xBAF3
 
-#define CONFIG_VERSION 4
-#define CONFIG_SIZE 32
+#define CONFIG_VERSION 5
+#define CONFIG_SIZE 60
 
 #define REPORT_ID_MULTIPLIER 99
 #define REPORT_ID_CONFIG 100
@@ -59,12 +59,12 @@ struct usage_rle_t {
 struct __attribute__((packed)) set_feature_t {
     uint8_t version;
     ConfigCommand command;
-    uint8_t data[26];
+    uint8_t data[CONFIG_SIZE - 6];
     uint32_t crc32;
 };
 
 struct __attribute__((packed)) get_feature_t {
-    uint8_t data[28];
+    uint8_t data[CONFIG_SIZE - 4];
     uint32_t crc32;
 };
 
