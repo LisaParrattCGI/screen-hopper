@@ -3,6 +3,19 @@
 
 #include <stdint.h>
 
+#define SCREEN_HOPPER_VENDOR_ID 0xCAFE
+#define SCREEN_HOPPER_PRODUCT_ID 0xBAF3
+
+#define CONFIG_VERSION 4
+#define CONFIG_SIZE 32
+
+#define REPORT_ID_MULTIPLIER 99
+#define REPORT_ID_CONFIG 100
+
+#define CONFIG_FLAG_UNMAPPED_PASSTHROUGH 0x01
+
+#define NSCREENS 2
+
 enum class ConfigCommand : int8_t {
     NO_COMMAND = 0,
     RESET_INTO_BOOTSEL = 1,
@@ -76,8 +89,6 @@ struct __attribute__((packed)) screen_def_t {
     uint32_t h;
     uint32_t sensitivity;
 };
-
-#define NSCREENS 2
 
 struct __attribute__((packed)) persist_config_t {
     uint8_t version;

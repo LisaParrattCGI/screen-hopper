@@ -15,13 +15,9 @@
 #include "our_descriptor.h"
 #include "remapper.h"
 
-const uint8_t CONFIG_VERSION = 4;
-
 const uint32_t PRESUMED_FLASH_SIZE = 2097152;
 const uint32_t CONFIG_OFFSET_IN_FLASH = (PRESUMED_FLASH_SIZE - FLASH_SECTOR_SIZE);
 const uint8_t* FLASH_CONFIG_IN_MEMORY = (((uint8_t*) XIP_BASE) + CONFIG_OFFSET_IN_FLASH);
-
-const uint8_t CONFIG_FLAG_UNMAPPED_PASSTHROUGH = 0x01;
 
 ConfigCommand last_config_command = ConfigCommand::NO_COMMAND;
 uint32_t requested_index = 0;

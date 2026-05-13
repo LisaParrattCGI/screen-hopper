@@ -3,11 +3,9 @@
 
 #include <stdint.h>
 
-#define CONFIG_SIZE 32
-#define RESOLUTION_MULTIPLIER 120
+#include "types.h"
 
-#define REPORT_ID_MULTIPLIER 99
-#define REPORT_ID_CONFIG 100
+#define RESOLUTION_MULTIPLIER 120
 
 #define MAX_INPUT_REPORT_ID 3
 
