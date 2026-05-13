@@ -1,0 +1,14 @@
+BasedOnStyle: Google
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 0
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+PointerAlignment: Left
+DerivePointerAlignment: false
+Cpp11BracedListStyle: false
+SpaceAfterCStyleCast: true
+SpacesBeforeTrailingComments: 2
+SortIncludes: Never
