@@ -21,6 +21,7 @@ const uint32_t CONFIG_OFFSET_IN_FLASH = (PRESUMED_FLASH_SIZE - FLASH_SECTOR_SIZE
 const uint8_t* FLASH_CONFIG_IN_MEMORY = (((uint8_t*) XIP_BASE) + CONFIG_OFFSET_IN_FLASH);
 
 ConfigCommand last_config_command = ConfigCommand::NO_COMMAND;
+RuntimeCommand last_runtime_command = RuntimeCommand::GET_STATUS;
 uint32_t requested_index = 0;
 macos_mouse_config_t persistent_mouse_config = {
     .tracking_speed = 45056,
@@ -102,6 +103,13 @@ void fill_mouse_config(macos_mouse_config_t* config) {
     config->frame_rate = double_to_fixed16(macos_pointer_acceleration.frame_rate);
     config->fixed_multiplier = double_to_fixed16(macos_pointer_acceleration.fixed_multiplier);
     config->placement_tolerance = double_to_fixed16(macos_placement_tolerance);
+}
+
+void fill_runtime_status(runtime_status_t* status) {
+    memset(status, 0, sizeof(runtime_status_t));
+    status->cursor = get_runtime_cursor();
+    get_runtime_placement_flags(status->placement_active, status->placement_anchor_pending);
+    fill_mouse_config(&status->mouse_config);
 }
 
 void load_config() {
@@ -250,6 +258,21 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
         config_buffer->crc32 = crc32((uint8_t*) config_buffer, CONFIG_SIZE - 4);
         return CONFIG_SIZE;
     }
+    if (report_id == REPORT_ID_RUNTIME && reqlen >= RUNTIME_SIZE) {
+        runtime_get_feature_t* runtime_buffer = (runtime_get_feature_t*) buffer;
+        memset(runtime_buffer, 0, sizeof(runtime_get_feature_t));
+        switch (last_runtime_command) {
+            case RuntimeCommand::GET_MOUSE_CONFIG:
+                fill_mouse_config((macos_mouse_config_t*) runtime_buffer);
+                break;
+            case RuntimeCommand::GET_STATUS:
+            default:
+                fill_runtime_status((runtime_status_t*) runtime_buffer);
+                break;
+        }
+        runtime_buffer->crc32 = crc32((uint8_t*) runtime_buffer, RUNTIME_SIZE - 4);
+        return RUNTIME_SIZE;
+    }
 
     return 0;
 }
@@ -323,6 +346,31 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                     }
                     break;
                 }
+                default:
+                    break;
+            }
+        }
+    }
+    if (report_id == REPORT_ID_RUNTIME && bufsize >= RUNTIME_SIZE) {
+        if (checksum_ok(buffer, RUNTIME_SIZE) && ((runtime_set_feature_t*) buffer)->version == CONFIG_VERSION) {
+            runtime_set_feature_t* runtime_buffer = (runtime_set_feature_t*) buffer;
+            last_runtime_command = runtime_buffer->command;
+            switch (runtime_buffer->command) {
+                case RuntimeCommand::SET_HOST_CURSOR: {
+                    runtime_cursor_t* cursor = (runtime_cursor_t*) runtime_buffer->data;
+                    set_cursor_from_host(*cursor);
+                    last_runtime_command = RuntimeCommand::GET_STATUS;
+                    break;
+                }
+                case RuntimeCommand::SET_MOUSE_CONFIG: {
+                    macos_mouse_config_t* mouse_config = (macos_mouse_config_t*) runtime_buffer->data;
+                    apply_mouse_config(mouse_config);
+                    last_runtime_command = RuntimeCommand::GET_STATUS;
+                    break;
+                }
+                case RuntimeCommand::GET_MOUSE_CONFIG:
+                case RuntimeCommand::GET_STATUS:
+                case RuntimeCommand::NO_COMMAND:
                 default:
                     break;
             }
