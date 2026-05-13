@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 
-import binascii
-import json
-import struct
 import sys
-
 import hid
+import binascii
+import struct
+import json
 
 from hid_protocol import (
     CONFIG_COMMAND_ADD_MAPPING as ADD_MAPPING,
@@ -19,9 +18,11 @@ from hid_protocol import (
     CONFIG_VERSION,
     DEFAULT_MOUSE_CONFIG,
     MOUSE_CONFIG_SCALE,
+    PRODUCT_ID,
     REPORT_ID_CONFIG,
     STICKY_FLAG,
     UNMAPPED_PASSTHROUGH_FLAG,
+    VENDOR_ID,
     open_config_device,
 )
 
@@ -114,5 +115,5 @@ for i, screen in enumerate(config.get("screens", [])):
         ),
     )
 
-send_command(device, RESUME)
 send_command(device, PERSIST_CONFIG)
+send_command(device, RESUME)
