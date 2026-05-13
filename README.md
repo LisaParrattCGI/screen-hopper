@@ -44,6 +44,26 @@ If you configure the screens so that they don't touch each other (there's a gap)
 
 If you can't use the browser-based configuration tool, there's also a [command-line tool](config-tool) that takes JSON in the same format as the web tool on standard input. I only tested it on Linux, but in theory it should also run on Windows and Mac.
 
+## macOS live sync and configuration
+
+The optional [macOS live sync tool](macos-live-sync) is a menu-bar app that keeps
+Screen Hopper's runtime mouse model aligned with the Mac it is attached to. It
+periodically sends the Mac's cursor position and mouse acceleration parameters
+through the runtime HID report. This helps Screen Hopper predict the same
+desktop cursor position that macOS is using.
+
+The same tool also includes a native configuration dialog. It reads the
+persistent configuration report, validates edits, preserves existing mappings,
+and writes the configuration back when Save is pressed.
+
+## HID protocol source of truth
+
+The vendor-defined HID feature report protocol is described in
+[protocol/screen_hopper_hid.json](protocol/screen_hopper_hid.json). Firmware,
+the Python command-line tools, the WebHID tool, and the macOS live sync tool each
+have a small language-specific mirror of those constants. When the protocol
+changes, update the JSON spec and those mirrors together.
+
 ## How to compile the firmware
 
 ```
@@ -56,3 +76,6 @@ cd build
 cmake ..
 make
 ```
+
+On macOS, install CMake and an ARM embedded GCC toolchain that provides
+`arm-none-eabi-gcc` before running CMake.
