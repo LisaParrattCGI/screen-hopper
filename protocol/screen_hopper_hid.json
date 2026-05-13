@@ -1,0 +1,117 @@
+{
+  "device": {
+    "vendor_id": "0xCAFE",
+    "product_id": "0xBAF3"
+  },
+  "config_version": 6,
+  "report_sizes": {
+    "config": 60,
+    "runtime": 60
+  },
+  "report_ids": {
+    "mouse_absolute": 1,
+    "keyboard": 2,
+    "consumer": 3,
+    "mouse_relative": 4,
+    "resolution_multiplier": 99,
+    "config": 100,
+    "runtime": 101
+  },
+  "top_level_collections": {
+    "config": {
+      "usage_page": "0xFF00",
+      "usage": "0x20"
+    },
+    "runtime": {
+      "usage_page": "0xFF01",
+      "usage": "0x21"
+    }
+  },
+  "flags": {
+    "unmapped_passthrough": "0x01",
+    "sticky_mapping": "0x01"
+  },
+  "mouse_config_scale": 65536,
+  "screen_count": 2,
+  "config_commands": {
+    "no_command": 0,
+    "reset_into_bootsel": 1,
+    "set_config": 2,
+    "get_config": 3,
+    "clear_mapping": 4,
+    "add_mapping": 5,
+    "get_mapping": 6,
+    "persist_config": 7,
+    "get_our_usages": 8,
+    "get_their_usages": 9,
+    "suspend": 10,
+    "resume": 11,
+    "set_screen": 12,
+    "get_screen": 13
+  },
+  "runtime_commands": {
+    "no_command": 0,
+    "get_status": 1,
+    "set_host_cursor": 2,
+    "set_mouse_config": 3,
+    "get_mouse_config": 4
+  },
+  "payloads": {
+    "set_feature_header": [
+      ["version", "uint8"],
+      ["command", "uint8"]
+    ],
+    "crc": ["crc32_le", "last 4 bytes of every config/runtime feature report"],
+    "get_config": [
+      ["version", "uint8"],
+      ["flags", "uint8"],
+      ["partial_scroll_timeout", "uint32_le"],
+      ["mapping_count", "uint32_le"],
+      ["our_usage_count", "uint32_le"],
+      ["their_usage_count", "uint32_le"],
+      ["interval_override", "uint8"],
+      ["constraint_mode", "uint8"],
+      ["offscreen_sensitivity", "uint32_le"],
+      ["cursor_placement_interval_seconds", "uint32_le"],
+      ["mouse_config", "5 * fixed16 uint32_le"]
+    ],
+    "set_config": [
+      ["flags", "uint8"],
+      ["partial_scroll_timeout", "uint32_le"],
+      ["interval_override", "uint8"],
+      ["constraint_mode", "uint8"],
+      ["offscreen_sensitivity", "uint32_le"],
+      ["cursor_placement_interval_seconds", "uint32_le"],
+      ["mouse_config", "5 * fixed16 uint32_le"]
+    ],
+    "screen": [
+      ["x", "uint32_le"],
+      ["y", "uint32_le"],
+      ["width", "uint32_le"],
+      ["height", "uint32_le"],
+      ["sensitivity", "uint32_le"]
+    ],
+    "set_screen": [
+      ["index", "uint8"],
+      ["screen", "screen"]
+    ],
+    "mapping": [
+      ["target_usage", "uint32_le"],
+      ["source_usage", "uint32_le"],
+      ["scaling", "int32_le"],
+      ["layer", "uint8"],
+      ["flags", "uint8"]
+    ],
+    "runtime_cursor": [
+      ["x", "int64_le"],
+      ["y", "int64_le"],
+      ["active_screen", "int8"]
+    ],
+    "runtime_status": [
+      ["cursor", "runtime_cursor"],
+      ["placement_active", "uint8"],
+      ["placement_anchor_pending", "uint8"],
+      ["mouse_config", "5 * fixed16 uint32_le"]
+    ]
+  }
+}
