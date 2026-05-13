@@ -279,6 +279,33 @@ bool within_bounds(int64_t x, int64_t y, int8_t& active_screen) {
             (constraint_mode == ConstraintMode::NO_CONSTRAINT));
 }
 
+runtime_cursor_t get_runtime_cursor() {
+    return (runtime_cursor_t) {
+        .x = cursor_x,
+        .y = cursor_y,
+        .active_screen = active_screen,
+    };
+}
+
+void get_runtime_placement_flags(uint8_t& placement_active, uint8_t& placement_anchor_pending) {
+    placement_active = 0;
+    placement_anchor_pending = 0;
+}
+
+void set_cursor_from_host(const runtime_cursor_t& cursor) {
+    cursor_x = cursor.x;
+    cursor_y = cursor.y;
+
+    if (cursor.active_screen >= 0 && cursor.active_screen < NSCREENS) {
+        active_screen = cursor.active_screen;
+        return;
+    }
+
+    int8_t derived_active_screen = -1;
+    within_bounds(cursor_x, cursor_y, derived_active_screen);
+    active_screen = derived_active_screen;
+}
+
 void process_mapping(bool auto_repeat) {
     if (suspended) {
         return;
