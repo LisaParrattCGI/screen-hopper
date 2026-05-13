@@ -6,6 +6,7 @@
 
 #include "pico/mutex.h"
 
+#include "macos_pointer_acceleration.h"
 #include "types.h"
 
 extern mutex_t their_usages_mutex;
@@ -34,5 +35,8 @@ extern uint8_t resolution_multiplier;
 extern std::unordered_map<int8_t, screen_def_t> screens;
 
 extern ConstraintMode constraint_mode;
+
+extern macos_pointer_acceleration_settings_t macos_pointer_acceleration;
+extern double macos_placement_tolerance;
 
 #endif

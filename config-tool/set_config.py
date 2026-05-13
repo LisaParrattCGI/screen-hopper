@@ -17,11 +17,30 @@ from hid_protocol import (
     CONFIG_COMMAND_SUSPEND as SUSPEND,
     CONFIG_SIZE,
     CONFIG_VERSION,
+    DEFAULT_MOUSE_CONFIG,
+    MOUSE_CONFIG_SCALE,
     REPORT_ID_CONFIG,
     STICKY_FLAG,
     UNMAPPED_PASSTHROUGH_FLAG,
     open_config_device,
 )
+
+
+def fixed16(value):
+    value = round(float(value) * MOUSE_CONFIG_SCALE)
+    return max(0, min(0xFFFFFFFF, value))
+
+
+def mouse_config_payload(config):
+    mouse_config = {**DEFAULT_MOUSE_CONFIG, **(config.get("mouse", {}) or {})}
+    return struct.pack(
+        "<5L",
+        fixed16(mouse_config["tracking_speed"]),
+        fixed16(mouse_config["pointer_resolution"]),
+        fixed16(mouse_config["frame_rate"]),
+        fixed16(mouse_config["fixed_multiplier"]),
+        fixed16(mouse_config["placement_tolerance"]),
+    )
 
 
 def feature_report(command, payload=b""):
@@ -62,7 +81,8 @@ send_command(
         constraint_mode,
         offscreen_sensitivity,
         cursor_placement_interval_seconds,
-    ),
+    )
+    + mouse_config_payload(config),
 )
 
 send_command(device, CLEAR_MAPPING)

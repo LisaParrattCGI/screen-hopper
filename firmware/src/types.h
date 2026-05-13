@@ -14,6 +14,7 @@
 
 #define CONFIG_FLAG_UNMAPPED_PASSTHROUGH 0x01
 
+#define MOUSE_CONFIG_SCALE 65536
 #define NSCREENS 2
 
 enum class ConfigCommand : int8_t {
@@ -90,6 +91,14 @@ struct __attribute__((packed)) screen_def_t {
     uint32_t sensitivity;
 };
 
+struct __attribute__((packed)) macos_mouse_config_t {
+    uint32_t tracking_speed;
+    uint32_t pointer_resolution;
+    uint32_t frame_rate;
+    uint32_t fixed_multiplier;
+    uint32_t placement_tolerance;
+};
+
 struct __attribute__((packed)) persist_config_t {
     uint8_t version;
     uint8_t flags;
@@ -112,6 +121,7 @@ struct __attribute__((packed)) get_config_t {
     ConstraintMode constraint_mode;
     uint32_t offscreen_sensitivity;
     uint32_t cursor_placement_interval_seconds;
+    macos_mouse_config_t mouse_config;
 };
 
 struct __attribute__((packed)) set_config_t {
@@ -121,6 +131,7 @@ struct __attribute__((packed)) set_config_t {
     ConstraintMode constraint_mode;
     uint32_t offscreen_sensitivity;
     uint32_t cursor_placement_interval_seconds;
+    macos_mouse_config_t mouse_config;
 };
 
 struct __attribute__((packed)) get_indexed_t {
