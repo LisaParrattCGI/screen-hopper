@@ -78,6 +78,13 @@ private struct RuntimeCursor: Equatable {
     var activeScreen: Int8
 }
 
+private struct RuntimeStatus {
+    var cursor: RuntimeCursor
+    var placementActive: Bool
+    var placementAnchorPending: Bool
+    var mouse: MouseConfig
+}
+
 private final class CRC32 {
     private static let table: [UInt32] = (0..<256).map { value in
         var crc = UInt32(value)
@@ -116,6 +123,27 @@ private final class ScreenHopperDevice {
 
     func readStatusPayload() throws -> Data {
         try readFeatureReport(reportID: runtimeReportID, size: runtimeSize)
+    }
+
+    func fetchStatus() throws -> RuntimeStatus {
+        try requestStatus()
+        let payload = try readStatusPayload()
+        return RuntimeStatus(
+            cursor: RuntimeCursor(
+                x: payload.readInt64LE(at: 0),
+                y: payload.readInt64LE(at: 8),
+                activeScreen: Int8(bitPattern: payload[16])
+            ),
+            placementActive: payload[17] != 0,
+            placementAnchorPending: payload[18] != 0,
+            mouse: MouseConfig(
+                trackingSpeed: doubleFromFixed16(payload.readUInt32LE(at: 19)),
+                pointerResolution: doubleFromFixed16(payload.readUInt32LE(at: 23)),
+                frameRate: doubleFromFixed16(payload.readUInt32LE(at: 27)),
+                fixedMultiplier: doubleFromFixed16(payload.readUInt32LE(at: 31)),
+                placementTolerance: doubleFromFixed16(payload.readUInt32LE(at: 35))
+            )
+        )
     }
 
     func sendMouseConfig(_ config: MouseConfig) throws {
@@ -745,28 +773,12 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             root.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
-        root.addArrangedSubview(makeHeader())
-
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.borderType = .noBorder
-        scrollView.drawsBackground = false
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.spacing = 14
-        stack.edgeInsets = NSEdgeInsets(top: 18, left: 22, bottom: 18, right: 22)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.documentView = stack
-
-        NSLayoutConstraint.activate([
-            stack.widthAnchor.constraint(equalTo: scrollView.widthAnchor),
-        ])
-
-        stack.addArrangedSubview(makeGeneralSection())
-        stack.addArrangedSubview(makeScreensSection())
-        stack.addArrangedSubview(makeMouseSection())
-        root.addArrangedSubview(scrollView)
+        let tabView = NSTabView()
+        tabView.translatesAutoresizingMaskIntoConstraints = false
+        tabView.addTabViewItem(tabItem(title: "Behavior", view: tabContent(makeGeneralSection())))
+        tabView.addTabViewItem(tabItem(title: "Screens", view: tabContent(makeScreensSection())))
+        tabView.addTabViewItem(tabItem(title: "Mouse", view: tabContent(makeMouseSection())))
+        root.addArrangedSubview(tabView)
 
         root.addArrangedSubview(makeFooter())
 
@@ -835,33 +847,6 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         unmappedCheckbox.font = NSFont.systemFont(ofSize: 13)
     }
 
-    private func makeHeader() -> NSView {
-        let view = NSView()
-        view.translatesAutoresizingMaskIntoConstraints = false
-        view.heightAnchor.constraint(equalToConstant: 84).isActive = true
-
-        let title = NSTextField(labelWithString: "Screen Hopper")
-        title.font = NSFont.systemFont(ofSize: 24, weight: .semibold)
-        title.translatesAutoresizingMaskIntoConstraints = false
-
-        let subtitle = NSTextField(labelWithString: "Persistent device configuration")
-        subtitle.font = NSFont.systemFont(ofSize: 13)
-        subtitle.textColor = .secondaryLabelColor
-        subtitle.translatesAutoresizingMaskIntoConstraints = false
-
-        view.addSubview(title)
-        view.addSubview(subtitle)
-
-        NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            title.topAnchor.constraint(equalTo: view.topAnchor, constant: 18),
-            subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
-            subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
-        ])
-
-        return view
-    }
-
     private func makeFooter() -> NSView {
         let view = NSView()
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -890,6 +875,29 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             saveButton.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             discardButton.trailingAnchor.constraint(equalTo: saveButton.leadingAnchor, constant: -8),
             discardButton.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+
+        return view
+    }
+
+    private func tabItem(title: String, view: NSView) -> NSTabViewItem {
+        let item = NSTabViewItem(identifier: title)
+        item.label = title
+        item.view = view
+        return item
+    }
+
+    private func tabContent(_ content: NSView) -> NSView {
+        let view = NSView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        content.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(content)
+
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 22),
+            content.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -22),
+            content.topAnchor.constraint(equalTo: view.topAnchor, constant: 22),
+            content.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -22),
         ])
 
         return view
@@ -1315,6 +1323,154 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
     }
 }
 
+private final class DebugWindowController: NSWindowController, NSWindowDelegate {
+    var onClose: (() -> Void)?
+
+    private let hostXLabel = NSTextField(labelWithString: "-")
+    private let hostYLabel = NSTextField(labelWithString: "-")
+    private let hostScreenLabel = NSTextField(labelWithString: "-")
+    private let deviceXLabel = NSTextField(labelWithString: "-")
+    private let deviceYLabel = NSTextField(labelWithString: "-")
+    private let deviceScreenLabel = NSTextField(labelWithString: "-")
+    private let placementLabel = NSTextField(labelWithString: "-")
+    private let statusLabel = NSTextField(labelWithString: "Waiting for data...")
+
+    init() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 310),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Screen Hopper Debug"
+        window.center()
+        window.isReleasedWhenClosed = false
+        super.init(window: window)
+        window.delegate = self
+        buildUI()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func update(host: RuntimeCursor, device: RuntimeStatus?, error: String?) {
+        hostXLabel.stringValue = coordinateString(host.x)
+        hostYLabel.stringValue = coordinateString(host.y)
+        hostScreenLabel.stringValue = screenString(host.activeScreen)
+
+        if let device {
+            deviceXLabel.stringValue = coordinateString(device.cursor.x)
+            deviceYLabel.stringValue = coordinateString(device.cursor.y)
+            deviceScreenLabel.stringValue = screenString(device.cursor.activeScreen)
+            placementLabel.stringValue = placementString(device)
+            statusLabel.stringValue = "Runtime status live"
+            statusLabel.textColor = .secondaryLabelColor
+        } else {
+            deviceXLabel.stringValue = "-"
+            deviceYLabel.stringValue = "-"
+            deviceScreenLabel.stringValue = "-"
+            placementLabel.stringValue = "-"
+            statusLabel.stringValue = error ?? "Screen Hopper disconnected"
+            statusLabel.textColor = .systemRed
+        }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onClose?()
+    }
+
+    private func buildUI() {
+        guard let contentView = window?.contentView else {
+            return
+        }
+
+        let root = NSStackView()
+        root.orientation = .vertical
+        root.spacing = 18
+        root.edgeInsets = NSEdgeInsets(top: 22, left: 24, bottom: 20, right: 24)
+        root.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(root)
+
+        root.addArrangedSubview(debugSection(title: "Host Global Cursor", rows: [
+            ("X", hostXLabel),
+            ("Y", hostYLabel),
+            ("Active screen", hostScreenLabel),
+        ]))
+        root.addArrangedSubview(debugSection(title: "Screen Hopper Runtime", rows: [
+            ("X", deviceXLabel),
+            ("Y", deviceYLabel),
+            ("Active screen", deviceScreenLabel),
+            ("Placement", placementLabel),
+        ]))
+
+        statusLabel.font = NSFont.systemFont(ofSize: 12)
+        statusLabel.textColor = .secondaryLabelColor
+        root.addArrangedSubview(statusLabel)
+
+        NSLayoutConstraint.activate([
+            root.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            root.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            root.topAnchor.constraint(equalTo: contentView.topAnchor),
+            root.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+    }
+
+    private func debugSection(title: String, rows: [(String, NSTextField)]) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        stack.addArrangedSubview(titleLabel)
+
+        for (name, valueLabel) in rows {
+            valueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+            valueLabel.alignment = .right
+            valueLabel.translatesAutoresizingMaskIntoConstraints = false
+            valueLabel.widthAnchor.constraint(equalToConstant: 160).isActive = true
+            stack.addArrangedSubview(debugRow(name, valueLabel))
+        }
+
+        return stack
+    }
+
+    private func debugRow(_ name: String, _ valueLabel: NSTextField) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 12
+
+        let nameLabel = NSTextField(labelWithString: name)
+        nameLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        nameLabel.textColor = .secondaryLabelColor
+
+        row.addArrangedSubview(nameLabel)
+        row.addArrangedSubview(NSView())
+        row.addArrangedSubview(valueLabel)
+        return row
+    }
+
+    private func coordinateString(_ value: Int64) -> String {
+        decimalString(Double(value) / screenCoordinateScale)
+    }
+
+    private func screenString(_ screen: Int8) -> String {
+        screen >= 0 ? "\(screen)" : "unknown"
+    }
+
+    private func placementString(_ status: RuntimeStatus) -> String {
+        if status.placementActive {
+            return "active"
+        }
+        if status.placementAnchorPending {
+            return "anchor pending"
+        }
+        return "idle"
+    }
+}
+
 private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private let options: Options
     private let locator = DeviceLocator()
@@ -1328,6 +1484,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private var lastSyncMenuItem: NSMenuItem?
     private var launchAtLoginMenuItem: NSMenuItem?
     private var configWindow: ConfigWindowController?
+    private var debugWindow: DebugWindowController?
+    private var debugTimer: Timer?
 
     init(options: Options) {
         self.options = options
@@ -1363,6 +1521,10 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         let configureItem = NSMenuItem(title: "Configure...", action: #selector(openConfiguration), keyEquivalent: ",")
         configureItem.target = self
         menu.addItem(configureItem)
+
+        let debugItem = NSMenuItem(title: "Debug Status...", action: #selector(openDebugStatus), keyEquivalent: "d")
+        debugItem.target = self
+        menu.addItem(debugItem)
 
         let launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchAtLoginItem.target = self
@@ -1436,6 +1598,58 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         controller.loadConfiguration()
+    }
+
+    @objc private func openDebugStatus() {
+        if let debugWindow {
+            debugWindow.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let controller = DebugWindowController()
+        controller.onClose = { [weak self] in
+            self?.debugWindow = nil
+            self?.debugTimer?.invalidate()
+            self?.debugTimer = nil
+        }
+        debugWindow = controller
+        controller.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        startDebugTimer()
+        debugTick()
+    }
+
+    private func startDebugTimer() {
+        debugTimer?.invalidate()
+        debugTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            self?.debugTick()
+        }
+    }
+
+    private func debugTick() {
+        guard let debugWindow else {
+            return
+        }
+
+        let hostCursor = currentCursor(activeScreen: options.activeScreen)
+
+        if device == nil {
+            device = locator.findRuntimeDevice()
+        }
+
+        guard let device else {
+            debugWindow.update(host: hostCursor, device: nil, error: locator.disconnectedMessage)
+            return
+        }
+
+        do {
+            let status = try device.fetchStatus()
+            debugWindow.update(host: hostCursor, device: status, error: nil)
+        } catch {
+            self.device = nil
+            debugWindow.update(host: hostCursor, device: nil, error: "Screen Hopper: \(briefError(error))")
+        }
     }
 
     private func syncTick() {
@@ -1780,6 +1994,14 @@ private extension Data {
 
     func readInt32LE(at offset: Int) -> Int32 {
         Int32(bitPattern: readUInt32LE(at: offset))
+    }
+
+    func readInt64LE(at offset: Int) -> Int64 {
+        var value: UInt64 = 0
+        for i in 0..<8 {
+            value |= UInt64(self[offset + i]) << UInt64(i * 8)
+        }
+        return Int64(bitPattern: value)
     }
 }
 
