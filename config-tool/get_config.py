@@ -14,6 +14,7 @@ from hid_protocol import (
     MOUSE_CONFIG_SCALE,
     PRODUCT_ID,
     REPORT_ID_CONFIG,
+    SCREEN_COORD_SCALE,
     SCREEN_COUNT,
     UNMAPPED_PASSTHROUGH_FLAG,
     VENDOR_ID,
@@ -24,6 +25,10 @@ from hid_protocol import (
 
 def from_fixed16(value):
     return value / MOUSE_CONFIG_SCALE
+
+
+def from_screen_coord(value):
+    return value / SCREEN_COORD_SCALE
 
 
 def feature_report(command, payload=b""):
@@ -110,10 +115,10 @@ for i in range(SCREEN_COUNT):
     x, y, w, h, sensitivity = struct.unpack_from("<LLLLL", payload)
     config["screens"].append(
         {
-            "x": x,
-            "y": y,
-            "w": w,
-            "h": h,
+            "x": from_screen_coord(x),
+            "y": from_screen_coord(y),
+            "w": from_screen_coord(w),
+            "h": from_screen_coord(h),
             "sensitivity": sensitivity,
         }
     )

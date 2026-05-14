@@ -20,6 +20,7 @@ from hid_protocol import (
     MOUSE_CONFIG_SCALE,
     PRODUCT_ID,
     REPORT_ID_CONFIG,
+    SCREEN_COORD_SCALE,
     STICKY_FLAG,
     UNMAPPED_PASSTHROUGH_FLAG,
     VENDOR_ID,
@@ -30,6 +31,16 @@ from hid_protocol import (
 def fixed16(value):
     value = round(float(value) * MOUSE_CONFIG_SCALE)
     return max(0, min(0xFFFFFFFF, value))
+
+
+def screen_coord(value):
+    numeric = float(value)
+    # Accept older exported configs that already used firmware-internal units.
+    if numeric >= 100000:
+        scaled = round(numeric)
+    else:
+        scaled = round(numeric * SCREEN_COORD_SCALE)
+    return max(0, min(0xFFFFFFFF, scaled))
 
 
 def mouse_config_payload(config):
@@ -107,10 +118,10 @@ for i, screen in enumerate(config.get("screens", [])):
         struct.pack(
             "<BLLLLL",
             i,
-            screen["x"],
-            screen["y"],
-            screen["w"],
-            screen["h"],
+            screen_coord(screen["x"]),
+            screen_coord(screen["y"]),
+            screen_coord(screen["w"]),
+            screen_coord(screen["h"]),
             screen.get("sensitivity", 1000),
         ),
     )
