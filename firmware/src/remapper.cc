@@ -126,6 +126,14 @@ int64_t consume_fractional_cursor_delta(double delta, double& fraction) {
     return whole;
 }
 
+double screen_coord_delta(double desktop_delta) {
+    return desktop_delta * SCREEN_COORD_SCALE;
+}
+
+double placement_tolerance_screen_coords() {
+    return macos_placement_tolerance * SCREEN_COORD_SCALE;
+}
+
 int16_t clamp_relative_axis(int64_t value) {
     if (value > std::numeric_limits<int16_t>::max()) {
         return std::numeric_limits<int16_t>::max();
@@ -479,11 +487,11 @@ double predicted_placement_axis_delta(int16_t raw_delta, bool x_axis) {
     macos_delta_t accelerated = x_axis
                                     ? apply_macos_acceleration(raw_delta, 0, macos_pointer_acceleration)
                                     : apply_macos_acceleration(0, raw_delta, macos_pointer_acceleration);
-    return x_axis ? accelerated.dx : accelerated.dy;
+    return screen_coord_delta(x_axis ? accelerated.dx : accelerated.dy);
 }
 
 int16_t choose_placement_axis_step(double remaining, bool x_axis) {
-    if (abs_double(remaining) <= macos_placement_tolerance) {
+    if (abs_double(remaining) <= placement_tolerance_screen_coords()) {
         return 0;
     }
 
@@ -522,8 +530,8 @@ void emit_cursor_placement_reports() {
         double remaining_x = cursor_placement.target_x - cursor_placement.predicted_x;
         double remaining_y = cursor_placement.target_y - cursor_placement.predicted_y;
 
-        if (abs_double(remaining_x) <= macos_placement_tolerance &&
-            abs_double(remaining_y) <= macos_placement_tolerance) {
+        if (abs_double(remaining_x) <= placement_tolerance_screen_coords() &&
+            abs_double(remaining_y) <= placement_tolerance_screen_coords()) {
             cursor_placement.active = false;
             break;
         }
@@ -546,8 +554,8 @@ void emit_cursor_placement_reports() {
         }
 
         macos_delta_t accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
-        cursor_placement.predicted_x += accelerated.dx;
-        cursor_placement.predicted_y += accelerated.dy;
+        cursor_placement.predicted_x += screen_coord_delta(accelerated.dx);
+        cursor_placement.predicted_y += screen_coord_delta(accelerated.dy);
     }
 }
 
@@ -699,8 +707,8 @@ void process_mapping(bool auto_repeat) {
     // Track the same relative report that will be sent to the host.
     // Apple accelerates the vector magnitude once, then applies that scalar to both axes.
     macos_delta_t accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
-    int64_t accelerated_dx = consume_fractional_cursor_delta(accelerated.dx, cursor_fraction_x);
-    int64_t accelerated_dy = consume_fractional_cursor_delta(accelerated.dy, cursor_fraction_y);
+    int64_t accelerated_dx = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dx), cursor_fraction_x);
+    int64_t accelerated_dy = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dy), cursor_fraction_y);
 
     int64_t new_cursor_x = cursor_x + accelerated_dx;
     int64_t new_cursor_y = cursor_y + accelerated_dy;
