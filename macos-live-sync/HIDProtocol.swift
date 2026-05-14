@@ -2,7 +2,7 @@ import Foundation
 
 let vendorID = 0xCAFE
 let productID = 0xBAF3
-let configVersion: UInt8 = 6
+let configVersion: UInt8 = 7
 let configSize = 60
 let configReportID: CFIndex = 100
 let runtimeSize = 60
@@ -12,6 +12,7 @@ let configUsage = 0x20
 let runtimeUsagePage = 0xFF01
 let runtimeUsage = 0x21
 let fixed16Scale = 65536.0
+let screenCoordinateScale = 1000.0
 let screenCount = 2
 let unmappedPassthroughFlag: UInt8 = 0x01
 let stickyMappingFlag: UInt8 = 0x01
