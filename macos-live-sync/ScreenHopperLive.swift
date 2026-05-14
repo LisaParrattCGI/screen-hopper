@@ -1480,10 +1480,10 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
 
     private func menuSummary(config: MouseConfig, cursor: RuntimeCursor) -> String {
         String(
-            format: "Screen Hopper: tracking %.4f, cursor %lld,%lld",
+            format: "Screen Hopper: tracking %.4f, cursor %.2f,%.2f",
             config.trackingSpeed,
-            cursor.x,
-            cursor.y
+            Double(cursor.x) / screenCoordinateScale,
+            Double(cursor.y) / screenCoordinateScale
         )
     }
 
@@ -1646,6 +1646,17 @@ private func currentDisplayRects() -> [CGRect] {
     return displayIDs.prefix(Int(count)).map { CGDisplayBounds($0) }.filter { !$0.isEmpty }
 }
 
+private func currentDisplayOriginOffset() -> CGPoint {
+    let rects = currentDisplayRects()
+    guard !rects.isEmpty else {
+        return .zero
+    }
+    return CGPoint(
+        x: rects.map { $0.minX }.min() ?? 0,
+        y: rects.map { $0.minY }.min() ?? 0
+    )
+}
+
 private func currentDisplayScreens(preservingSensitivityFrom existingScreens: [ScreenConfig]) -> [ScreenConfig] {
     let rects = currentDisplayRects()
     guard !rects.isEmpty else {
@@ -1671,9 +1682,10 @@ private func looksLikeLegacyScreenGeometry(_ screens: [ScreenConfig]) -> Bool {
 
 private func currentCursor(activeScreen: Int8 = -1) -> RuntimeCursor {
     let point = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
+    let offset = currentDisplayOriginOffset()
     return RuntimeCursor(
-        x: Int64(point.x.rounded()),
-        y: Int64(point.y.rounded()),
+        x: Int64(((point.x - offset.x) * screenCoordinateScale).rounded()),
+        y: Int64(((point.y - offset.y) * screenCoordinateScale).rounded()),
         activeScreen: activeScreen
     )
 }
