@@ -334,6 +334,8 @@ private final class DeviceLocator {
         let match: [String: Any] = [
             kIOHIDVendorIDKey as String: vendorID,
             kIOHIDProductIDKey as String: productID,
+            kIOHIDDeviceUsagePageKey as String: runtimeUsagePage,
+            kIOHIDDeviceUsageKey as String: runtimeUsage,
         ]
         IOHIDManagerSetDeviceMatching(manager, match as CFDictionary)
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
@@ -348,16 +350,21 @@ private final class DeviceLocator {
         lastProbeError = nil
 
         guard let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else {
-            lastProbeError = "Screen Hopper: no matching HID devices"
+            lastProbeError = "Screen Hopper: no runtime HID collection"
             return nil
         }
 
         if devices.isEmpty {
-            lastProbeError = "Screen Hopper: no matching HID devices"
+            lastProbeError = "Screen Hopper: no runtime HID collection"
             return nil
         }
 
         for device in devices {
+            guard deviceMatchesUsage(device, usagePage: runtimeUsagePage, usage: runtimeUsage) else {
+                lastProbeError = "\(deviceSummary(device)): not runtime HID collection"
+                continue
+            }
+
             if let maxFeatureSize = intProperty(device, "MaxFeatureReportSize" as CFString),
                maxFeatureSize > 0,
                maxFeatureSize < runtimeSize {
@@ -388,6 +395,18 @@ private final class DeviceLocator {
             lastProbeError = "Screen Hopper: runtime feature report not found"
         }
         return nil
+    }
+
+    private func deviceMatchesUsage(_ device: IOHIDDevice, usagePage expectedUsagePage: Int, usage expectedUsage: Int) -> Bool {
+        let usagePage = intProperty(device, kIOHIDPrimaryUsagePageKey as CFString) ??
+            intProperty(device, kIOHIDDeviceUsagePageKey as CFString)
+        let usage = intProperty(device, kIOHIDPrimaryUsageKey as CFString) ??
+            intProperty(device, kIOHIDDeviceUsageKey as CFString)
+
+        guard let usagePage, let usage else {
+            return false
+        }
+        return usagePage == expectedUsagePage && usage == expectedUsage
     }
 
     private func probe(_ candidate: ScreenHopperDevice, device: IOHIDDevice, mode: FeatureReportMode) throws {
