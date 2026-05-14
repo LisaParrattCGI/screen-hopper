@@ -773,6 +773,8 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             root.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
 
+        root.addArrangedSubview(fixedHeightSpacer(12))
+
         let tabView = NSTabView()
         tabView.translatesAutoresizingMaskIntoConstraints = false
         tabView.addTabViewItem(tabItem(title: "Behavior", view: tabContent(makeGeneralSection())))
@@ -878,6 +880,13 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         ])
 
         return view
+    }
+
+    private func fixedHeightSpacer(_ height: CGFloat) -> NSView {
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.heightAnchor.constraint(equalToConstant: height).isActive = true
+        return spacer
     }
 
     private func tabItem(title: String, view: NSView) -> NSTabViewItem {
