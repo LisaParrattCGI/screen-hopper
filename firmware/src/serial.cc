@@ -27,54 +27,64 @@ void serial_init() {
 #define ESC_END 0334 /* ESC ESC_END means END data byte */
 #define ESC_ESC 0335 /* ESC ESC_ESC means ESC data byte */
 
+struct serial_read_state_t {
+    uint8_t buffer[SERIAL_MAX_PAYLOAD_SIZE + 32];
+    uint16_t bytes_read;
+    bool escaped;
+};
+
+serial_read_state_t read_states[2];
+
+serial_read_state_t& read_state_for(uart_inst_t* uart) {
+    return read_states[uart == uart1 ? 1 : 0];
+}
+
 bool serial_read(msg_recv_cb_t callback, uart_inst_t* uart) {
-    static uint8_t buffer[SERIAL_MAX_PAYLOAD_SIZE + 32];
-    static uint16_t bytes_read = 0;
-    static bool escaped = false;
+    serial_read_state_t& state = read_state_for(uart);
 
     while (uart_is_readable(uart)) {
-        bytes_read %= sizeof(buffer);
+        state.bytes_read %= sizeof(state.buffer);
 
         char c = uart_getc(uart);
 
-        if (escaped) {
+        if (state.escaped) {
             switch (c) {
                 case ESC_END:
-                    buffer[bytes_read++] = END;
+                    state.buffer[state.bytes_read++] = END;
                     break;
                 case ESC_ESC:
-                    buffer[bytes_read++] = ESC;
+                    state.buffer[state.bytes_read++] = ESC;
                     break;
                 default:
                     // this shouldn't happen
-                    buffer[bytes_read++] = c;
+                    state.buffer[state.bytes_read++] = c;
                     break;
             }
-            escaped = false;
+            state.escaped = false;
         } else {
             switch (c) {
                 case END:
-                    if (bytes_read > 4) {
-                        uint32_t crc = crc32(buffer, bytes_read - 4);
+                    if (state.bytes_read > 4) {
+                        uint32_t crc = crc32(state.buffer, state.bytes_read - 4);
                         uint32_t received_crc = 0;
                         for (int i = 0; i < 4; i++) {
-                            received_crc = (received_crc << 8) | buffer[bytes_read - 1 - i];
+                            received_crc = (received_crc << 8) | state.buffer[state.bytes_read - 1 - i];
                         }
                         if (crc == received_crc) {
-                            callback(buffer, bytes_read - 4);
-                            bytes_read = 0;
+                            callback(state.buffer, state.bytes_read - 4);
+                            state.bytes_read = 0;
                             return true;
                         } else {
                             printf("CRC error\n");
                         }
                     }
-                    bytes_read = 0;
+                    state.bytes_read = 0;
                     break;
                 case ESC:
-                    escaped = true;
+                    state.escaped = true;
                     break;
                 default:
-                    buffer[bytes_read++] = c;
+                    state.buffer[state.bytes_read++] = c;
                     break;
             }
         }
