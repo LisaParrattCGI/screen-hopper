@@ -26,6 +26,8 @@ const uint8_t HID_UNIT = 0x64;
 const uint32_t MOUSE_X_USAGE = 0x00010030;
 const uint32_t MOUSE_Y_USAGE = 0x00010031;
 const uint32_t HID_UNIT_ENGLISH_LINEAR_INCH = 0x13;
+const uint32_t MIN_POINTER_RESOLUTION_FIXED = UINT32_C(25) * MOUSE_CONFIG_SCALE;
+const uint32_t MAX_POINTER_RESOLUTION_FIXED = UINT32_C(50000) * MOUSE_CONFIG_SCALE;
 
 int32_t sign_extend(uint32_t value, uint8_t item_size) {
     if (item_size == 0) {
@@ -103,7 +105,9 @@ uint32_t pointer_resolution_for_usage(uint32_t usage,
     }
 
     uint64_t resolution = (numerator + denominator / 2) / denominator;
-    if (resolution > std::numeric_limits<uint32_t>::max()) {
+    if (resolution > std::numeric_limits<uint32_t>::max() ||
+        resolution < MIN_POINTER_RESOLUTION_FIXED ||
+        resolution > MAX_POINTER_RESOLUTION_FIXED) {
         return 0;
     }
     return (uint32_t) resolution;
@@ -176,6 +180,9 @@ std::unordered_map<uint8_t, uint16_t> parse_descriptor(std::unordered_map<uint8_
         uint8_t item_size = report_descriptor[idx] & 0x03;
         if (item_size == 3) {
             item_size = 4;
+        }
+        if (idx + 1 + item_size > len) {
+            break;
         }
         uint32_t value = 0;
         idx++;

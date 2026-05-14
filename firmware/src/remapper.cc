@@ -150,10 +150,7 @@ uint64_t interface_usage_key(uint16_t interface, uint32_t usage) {
 }
 
 uint32_t advertised_pointer_resolution(uint32_t usage) {
-    auto it = our_usages_flat.find(usage);
-    if (it != our_usages_flat.end() && it->second.pointer_resolution != 0) {
-        return it->second.pointer_resolution;
-    }
+    (void) usage;
     return ADVERTISED_POINTER_RESOLUTION_FIXED;
 }
 
