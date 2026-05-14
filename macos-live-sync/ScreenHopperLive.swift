@@ -4,9 +4,13 @@ import Foundation
 import IOKit.hid
 import ServiceManagement
 
-private enum FeatureReportMode {
-    case bodyOnly
-    case reportIDPrefixed
+private struct FeatureReportMode {
+    let writeIncludesReportID: Bool
+
+    static let candidates = [
+        FeatureReportMode(writeIncludesReportID: false),
+        FeatureReportMode(writeIncludesReportID: true),
+    ]
 }
 
 private struct Options {
@@ -266,7 +270,7 @@ private final class ScreenHopperDevice {
         body.appendUInt32LE(CRC32.compute(body))
 
         var report = Data()
-        if mode == .reportIDPrefixed {
+        if mode.writeIncludesReportID {
             report.appendUInt8(UInt8(reportID))
         }
         report.append(body)
@@ -284,7 +288,7 @@ private final class ScreenHopperDevice {
     }
 
     private func readFeatureReport(reportID: CFIndex, size: Int) throws -> Data {
-        let length = mode == .reportIDPrefixed ? size + 1 : size
+        let length = size + 1
         var report = Data(repeating: 0, count: length)
         var reportLength = report.count
 
@@ -301,17 +305,11 @@ private final class ScreenHopperDevice {
 
         report = report.prefix(reportLength)
         let body: Data
-        switch mode {
-        case .bodyOnly:
-            body = report
-        case .reportIDPrefixed:
-            guard report.first == UInt8(reportID) else {
-                throw LiveSyncError.invalidReport
-            }
-            body = report.dropFirst()
-        }
-
-        guard body.count >= size else {
+        if report.count >= size + 1 && report.first == UInt8(reportID) {
+            body = Data(report.dropFirst().prefix(size))
+        } else if report.count >= size {
+            body = Data(report.prefix(size))
+        } else {
             throw LiveSyncError.invalidReport
         }
 
@@ -334,8 +332,6 @@ private final class DeviceLocator {
         let match: [String: Any] = [
             kIOHIDVendorIDKey as String: vendorID,
             kIOHIDProductIDKey as String: productID,
-            kIOHIDDeviceUsagePageKey as String: runtimeUsagePage,
-            kIOHIDDeviceUsageKey as String: runtimeUsage,
         ]
         IOHIDManagerSetDeviceMatching(manager, match as CFDictionary)
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
@@ -350,24 +346,20 @@ private final class DeviceLocator {
         lastProbeError = nil
 
         guard let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else {
-            lastProbeError = "Screen Hopper: no runtime HID collection"
+            lastProbeError = "Screen Hopper: no matching HID devices"
             return nil
         }
 
         if devices.isEmpty {
-            lastProbeError = "Screen Hopper: no runtime HID collection"
+            lastProbeError = "Screen Hopper: no matching HID devices"
             return nil
         }
 
         for device in devices {
-            guard deviceMatchesUsage(device, usagePage: runtimeUsagePage, usage: runtimeUsage) else {
-                lastProbeError = "\(deviceSummary(device)): not runtime HID collection"
-                continue
-            }
-
             if let maxFeatureSize = intProperty(device, "MaxFeatureReportSize" as CFString),
                maxFeatureSize > 0,
                maxFeatureSize < runtimeSize {
+                lastProbeError = "\(deviceSummary(device)): feature report too small (\(maxFeatureSize) bytes)"
                 continue
             }
 
@@ -377,10 +369,10 @@ private final class DeviceLocator {
                 continue
             }
 
-            for mode in [FeatureReportMode.bodyOnly, FeatureReportMode.reportIDPrefixed] {
+            for mode in FeatureReportMode.candidates {
                 let candidate = ScreenHopperDevice(device: device, mode: mode)
                 do {
-                    try probe(candidate, device: device, mode: mode)
+                    try probe(candidate)
                     return candidate
                 } catch {
                     lastProbeError = "\(deviceSummary(device)): \(error)"
@@ -397,57 +389,9 @@ private final class DeviceLocator {
         return nil
     }
 
-    private func deviceMatchesUsage(_ device: IOHIDDevice, usagePage expectedUsagePage: Int, usage expectedUsage: Int) -> Bool {
-        let usagePage = intProperty(device, kIOHIDPrimaryUsagePageKey as CFString) ??
-            intProperty(device, kIOHIDDeviceUsagePageKey as CFString)
-        let usage = intProperty(device, kIOHIDPrimaryUsageKey as CFString) ??
-            intProperty(device, kIOHIDDeviceUsageKey as CFString)
-
-        guard let usagePage, let usage else {
-            return false
-        }
-        return usagePage == expectedUsagePage && usage == expectedUsage
-    }
-
-    private func probe(_ candidate: ScreenHopperDevice, device: IOHIDDevice, mode: FeatureReportMode) throws {
+    private func probe(_ candidate: ScreenHopperDevice) throws {
         try candidate.requestStatus()
-
-        let length = mode == .reportIDPrefixed ? runtimeSize + 1 : runtimeSize
-        var report = Data(repeating: 0, count: length)
-        var reportLength = report.count
-
-        let result = report.withUnsafeMutableBytes { bytes -> IOReturn in
-            guard let pointer = bytes.bindMemory(to: UInt8.self).baseAddress else {
-                return kIOReturnNoMemory
-            }
-            return IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, runtimeReportID, pointer, &reportLength)
-        }
-
-        guard result == kIOReturnSuccess else {
-            throw LiveSyncError.hidGetReportFailed(result)
-        }
-
-        report = report.prefix(reportLength)
-        let body: Data
-        switch mode {
-        case .bodyOnly:
-            body = report
-        case .reportIDPrefixed:
-            guard report.first == UInt8(runtimeReportID) else {
-                throw LiveSyncError.invalidReport
-            }
-            body = report.dropFirst()
-        }
-
-        guard body.count >= runtimeSize else {
-            throw LiveSyncError.invalidReport
-        }
-
-        let payload = body.prefix(runtimeSize - 4)
-        let expected = body.readUInt32LE(at: runtimeSize - 4)
-        guard CRC32.compute(payload) == expected else {
-            throw LiveSyncError.invalidCRC
-        }
+        _ = try candidate.readStatusPayload()
     }
 
     private func deviceSummary(_ device: IOHIDDevice) -> String {
