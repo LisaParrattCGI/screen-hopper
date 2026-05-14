@@ -80,6 +80,7 @@ std::unordered_map<uint32_t, int32_t> input_state;
 std::unordered_map<uint32_t, int32_t> prev_input_state;
 std::unordered_map<uint64_t, int32_t> sticky_state;  // layer << 32 | usage -> state
 std::unordered_map<uint32_t, int32_t> accumulated;   // * 1000
+std::unordered_map<uint64_t, int64_t> pointer_resolution_remainder;
 
 std::vector<uint32_t> relative_usages;
 std::unordered_set<uint32_t> relative_usage_set;
@@ -126,6 +127,14 @@ int64_t consume_fractional_cursor_delta(double delta, double& fraction) {
     return whole;
 }
 
+double screen_coord_delta(double desktop_delta) {
+    return desktop_delta * SCREEN_COORD_SCALE;
+}
+
+double placement_tolerance_screen_coords() {
+    return macos_placement_tolerance * SCREEN_COORD_SCALE;
+}
+
 int16_t clamp_relative_axis(int64_t value) {
     if (value > std::numeric_limits<int16_t>::max()) {
         return std::numeric_limits<int16_t>::max();
@@ -134,6 +143,33 @@ int16_t clamp_relative_axis(int64_t value) {
         return std::numeric_limits<int16_t>::min();
     }
     return (int16_t) value;
+}
+
+uint64_t interface_usage_key(uint16_t interface, uint32_t usage) {
+    return ((uint64_t) interface << 32) | usage;
+}
+
+uint32_t advertised_pointer_resolution(uint32_t usage) {
+    auto it = our_usages_flat.find(usage);
+    if (it != our_usages_flat.end() && it->second.pointer_resolution != 0) {
+        return it->second.pointer_resolution;
+    }
+    return ADVERTISED_POINTER_RESOLUTION_FIXED;
+}
+
+int32_t translate_pointer_resolution(uint32_t usage, const usage_def_t& usage_def, uint16_t interface, int32_t value) {
+    uint32_t target_resolution = advertised_pointer_resolution(usage);
+    if ((usage != MOUSE_X_USAGE && usage != MOUSE_Y_USAGE) ||
+        usage_def.pointer_resolution == 0 ||
+        usage_def.pointer_resolution == target_resolution) {
+        return value;
+    }
+
+    uint64_t key = interface_usage_key(interface, usage);
+    int64_t scaled = (int64_t) value * target_resolution + pointer_resolution_remainder[key];
+    int32_t translated = (int32_t) (scaled / (int64_t) usage_def.pointer_resolution);
+    pointer_resolution_remainder[key] = scaled - (int64_t) translated * usage_def.pointer_resolution;
+    return translated;
 }
 
 int16_t consume_relative_axis_movement(uint32_t usage) {
@@ -150,6 +186,20 @@ int16_t consume_relative_axis_movement(uint32_t usage) {
     int64_t consumed = (int64_t) report_delta * 1000;
     accumulated[usage] -= (int32_t) consumed;
     return report_delta;
+}
+
+void clear_pointer_resolution_remainders(uint8_t dev_addr) {
+    uint16_t interface_prefix = (uint16_t) dev_addr << 8;
+    uint64_t min_key = (uint64_t) interface_prefix << 32;
+    uint64_t max_key = (uint64_t) (interface_prefix | 0xFF) << 32 | 0xFFFFFFFF;
+
+    for (auto it = pointer_resolution_remainder.cbegin(); it != pointer_resolution_remainder.cend();) {
+        if (it->first >= min_key && it->first <= max_key) {
+            it = pointer_resolution_remainder.erase(it);
+        } else {
+            it++;
+        }
+    }
 }
 
 int32_t handle_scroll(uint32_t source_usage, uint32_t target_usage, int32_t movement) {
@@ -479,11 +529,11 @@ double predicted_placement_axis_delta(int16_t raw_delta, bool x_axis) {
     macos_delta_t accelerated = x_axis
                                     ? apply_macos_acceleration(raw_delta, 0, macos_pointer_acceleration)
                                     : apply_macos_acceleration(0, raw_delta, macos_pointer_acceleration);
-    return x_axis ? accelerated.dx : accelerated.dy;
+    return screen_coord_delta(x_axis ? accelerated.dx : accelerated.dy);
 }
 
 int16_t choose_placement_axis_step(double remaining, bool x_axis) {
-    if (abs_double(remaining) <= macos_placement_tolerance) {
+    if (abs_double(remaining) <= placement_tolerance_screen_coords()) {
         return 0;
     }
 
@@ -522,8 +572,8 @@ void emit_cursor_placement_reports() {
         double remaining_x = cursor_placement.target_x - cursor_placement.predicted_x;
         double remaining_y = cursor_placement.target_y - cursor_placement.predicted_y;
 
-        if (abs_double(remaining_x) <= macos_placement_tolerance &&
-            abs_double(remaining_y) <= macos_placement_tolerance) {
+        if (abs_double(remaining_x) <= placement_tolerance_screen_coords() &&
+            abs_double(remaining_y) <= placement_tolerance_screen_coords()) {
             cursor_placement.active = false;
             break;
         }
@@ -546,8 +596,8 @@ void emit_cursor_placement_reports() {
         }
 
         macos_delta_t accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
-        cursor_placement.predicted_x += accelerated.dx;
-        cursor_placement.predicted_y += accelerated.dy;
+        cursor_placement.predicted_x += screen_coord_delta(accelerated.dx);
+        cursor_placement.predicted_y += screen_coord_delta(accelerated.dy);
     }
 }
 
@@ -699,8 +749,8 @@ void process_mapping(bool auto_repeat) {
     // Track the same relative report that will be sent to the host.
     // Apple accelerates the vector magnitude once, then applies that scalar to both axes.
     macos_delta_t accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
-    int64_t accelerated_dx = consume_fractional_cursor_delta(accelerated.dx, cursor_fraction_x);
-    int64_t accelerated_dy = consume_fractional_cursor_delta(accelerated.dy, cursor_fraction_y);
+    int64_t accelerated_dx = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dx), cursor_fraction_x);
+    int64_t accelerated_dy = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dy), cursor_fraction_y);
 
     int64_t new_cursor_x = cursor_x + accelerated_dx;
     int64_t new_cursor_y = cursor_y + accelerated_dy;
@@ -880,7 +930,7 @@ inline void read_input(const uint8_t* report, int len, uint32_t source_usage, co
     }
 
     if (their_usage.is_relative) {
-        input_state[source_usage] = value;
+        input_state[source_usage] = translate_pointer_resolution(source_usage, their_usage, interface, value);
     } else {
         if (value) {
             input_state[source_usage] |= 1 << interface_index[interface];

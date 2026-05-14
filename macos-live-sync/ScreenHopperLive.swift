@@ -625,8 +625,10 @@ private final class ScreenLayoutView: NSView {
         let contentWidth = max(maxX - minX, 1)
         let contentHeight = max(maxY - minY, 1)
         let padding: CGFloat = 24
-        let scale = min((bounds.width - padding * 2) / contentWidth, (bounds.height - padding * 2) / contentHeight)
-        let safeScale = max(min(scale, 1.0), 0.05)
+        let availableWidth = max(bounds.width - padding * 2, 1)
+        let availableHeight = max(bounds.height - padding * 2, 1)
+        let scale = min(availableWidth / contentWidth, availableHeight / contentHeight)
+        let safeScale = scale.isFinite && scale > 0 ? min(scale, 1.0) : 1.0
         let drawnWidth = contentWidth * safeScale
         let drawnHeight = contentHeight * safeScale
         return (
@@ -663,6 +665,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
     private let offscreenSensitivityField = NSTextField()
     private let cursorPlacementField = NSTextField()
     private let constraintControl = NSSegmentedControl(labels: ["None", "Box", "Visible"], trackingMode: .selectOne, target: nil, action: nil)
+    private let useCurrentDisplaysButton = NSButton(title: "Use Current Displays", target: nil, action: nil)
 
     private let trackingSpeedField = NSTextField()
     private let trackingSpeedSlider = NSSlider(value: 0.6875, minValue: 0, maxValue: 3, target: nil, action: nil)
@@ -705,7 +708,10 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
                     self.originalConfig = config
                     self.workingConfig = config
                     self.populate(from: config)
-                    self.setLoading(false, message: "Configuration loaded. Mappings will be preserved unchanged.")
+                    let message = looksLikeLegacyScreenGeometry(config.screens)
+                        ? "Configuration loaded. Screen geometry looks like legacy abstract units; use current displays or enter pixel bounds before saving."
+                        : "Configuration loaded. Mappings will be preserved unchanged."
+                    self.setLoading(false, message: message)
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -783,11 +789,14 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             frameRateField,
             fixedMultiplierField,
             placementToleranceField,
+            useCurrentDisplaysButton,
         ]
         for control in controls {
             control.target = self
             control.action = #selector(controlChanged)
         }
+
+        useCurrentDisplaysButton.action = #selector(useCurrentDisplays)
 
         for fieldSet in screenFields {
             for field in [fieldSet.x, fieldSet.y, fieldSet.width, fieldSet.height, fieldSet.sensitivity] {
@@ -906,6 +915,9 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         layoutView.heightAnchor.constraint(equalToConstant: 210).isActive = true
         outer.addArrangedSubview(layoutView)
 
+        useCurrentDisplaysButton.bezelStyle = .rounded
+        outer.addArrangedSubview(useCurrentDisplaysButton)
+
         let screensStack = NSStackView()
         screensStack.orientation = .horizontal
         screensStack.spacing = 12
@@ -924,7 +936,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         }
 
         outer.addArrangedSubview(screensStack)
-        return section(title: "Screens", subtitle: "Drag screens in the preview, or type exact geometry below.", content: outer)
+        return section(title: "Screens", subtitle: "Use host display coordinates. Drag screens in the preview, or type exact bounds below.", content: outer)
     }
 
     private func makeMouseSection() -> NSView {
@@ -945,10 +957,10 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
 
     private func screenEditor(index: Int, fields: ScreenFieldSet) -> NSView {
         let stack = formStack(labelWidth: 74)
-        stack.addArrangedSubview(formRow("X", fields.x, labelWidth: 74))
-        stack.addArrangedSubview(formRow("Y", fields.y, labelWidth: 74))
-        stack.addArrangedSubview(formRow("Width", fields.width, labelWidth: 74))
-        stack.addArrangedSubview(formRow("Height", fields.height, labelWidth: 74))
+        stack.addArrangedSubview(formRow("X", fields.x, suffix: "px", labelWidth: 74))
+        stack.addArrangedSubview(formRow("Y", fields.y, suffix: "px", labelWidth: 74))
+        stack.addArrangedSubview(formRow("Width", fields.width, suffix: "px", labelWidth: 74))
+        stack.addArrangedSubview(formRow("Height", fields.height, suffix: "px", labelWidth: 74))
         stack.addArrangedSubview(formRow("Sensitivity", fields.sensitivity, suffix: "x", labelWidth: 74))
         return section(title: "Screen \(index)", subtitle: "", content: stack, compact: true)
     }
@@ -1064,10 +1076,10 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
 
     private func populateScreenFields(_ screens: [ScreenConfig]) {
         for (index, screen) in screens.enumerated() where index < screenFields.count {
-            screenFields[index].x.stringValue = String(screen.x)
-            screenFields[index].y.stringValue = String(screen.y)
-            screenFields[index].width.stringValue = String(screen.width)
-            screenFields[index].height.stringValue = String(screen.height)
+            screenFields[index].x.stringValue = screenCoordinateString(screen.x)
+            screenFields[index].y.stringValue = screenCoordinateString(screen.y)
+            screenFields[index].width.stringValue = screenCoordinateString(screen.width)
+            screenFields[index].height.stringValue = screenCoordinateString(screen.height)
             screenFields[index].sensitivity.stringValue = decimalString(Double(screen.sensitivity) / 1000.0)
         }
     }
@@ -1095,10 +1107,10 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         for fieldSet in screenFields {
             screens.append(
                 ScreenConfig(
-                    x: uint32Value(fieldSet.x),
-                    y: uint32Value(fieldSet.y),
-                    width: uint32Value(fieldSet.width),
-                    height: uint32Value(fieldSet.height),
+                    x: screenCoordinateValue(fieldSet.x),
+                    y: screenCoordinateValue(fieldSet.y),
+                    width: screenCoordinateValue(fieldSet.width),
+                    height: screenCoordinateValue(fieldSet.height),
                     sensitivity: clampedUInt32(Int64((doubleValue(fieldSet.sensitivity) * 1000.0).rounded()))
                 )
             )
@@ -1108,6 +1120,10 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
     }
 
     @objc private func controlChanged(_ sender: Any?) {
+        if sender as? NSButton === useCurrentDisplaysButton {
+            return
+        }
+
         if sender as? NSSlider === trackingSpeedSlider {
             trackingSpeedField.stringValue = decimalString(trackingSpeedSlider.doubleValue)
         } else if sender as? NSTextField === trackingSpeedField {
@@ -1118,6 +1134,32 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             workingConfig = config
             layoutView.screens = config.screens
         }
+        markDirty()
+    }
+
+    @objc private func useCurrentDisplays() {
+        guard var config = collectConfig() ?? workingConfig else {
+            return
+        }
+
+        let displayScreens = currentDisplayScreens(preservingSensitivityFrom: config.screens)
+        guard !displayScreens.isEmpty else {
+            statusLabel.stringValue = "Could not read current display layout."
+            return
+        }
+
+        var screens = config.screens
+        for index in 0..<min(screenCount, displayScreens.count) {
+            if index < screens.count {
+                screens[index] = displayScreens[index]
+            } else {
+                screens.append(displayScreens[index])
+            }
+        }
+        config.screens = Array(screens.prefix(screenCount))
+        workingConfig = config
+        populateScreenFields(config.screens)
+        layoutView.screens = config.screens
         markDirty()
     }
 
@@ -1438,10 +1480,10 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
 
     private func menuSummary(config: MouseConfig, cursor: RuntimeCursor) -> String {
         String(
-            format: "Screen Hopper: tracking %.4f, cursor %lld,%lld",
+            format: "Screen Hopper: tracking %.4f, cursor %.2f,%.2f",
             config.trackingSpeed,
-            cursor.x,
-            cursor.y
+            Double(cursor.x) / screenCoordinateScale,
+            Double(cursor.y) / screenCoordinateScale
         )
     }
 
@@ -1520,6 +1562,21 @@ private func doubleFromFixed16(_ value: UInt32) -> Double {
     Double(value) / fixed16Scale
 }
 
+private func screenCoordinateString(_ value: UInt32) -> String {
+    decimalString(Double(value) / screenCoordinateScale)
+}
+
+private func screenCoordinateValue(_ field: NSTextField) -> UInt32 {
+    let scaled = (doubleValue(field) * screenCoordinateScale).rounded()
+    if !scaled.isFinite || scaled <= 0 {
+        return 0
+    }
+    if scaled >= Double(UInt32.max) {
+        return UInt32.max
+    }
+    return UInt32(scaled)
+}
+
 private func clampedUInt32(_ value: Int64) -> UInt32 {
     if value <= 0 {
         return 0
@@ -1575,11 +1632,60 @@ private func uint32Value(_ field: NSTextField) -> UInt32 {
     clampedUInt32(Int64(doubleValue(field).rounded()))
 }
 
+private func currentDisplayRects() -> [CGRect] {
+    var count: UInt32 = 0
+    guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
+        return []
+    }
+
+    var displayIDs = [CGDirectDisplayID](repeating: 0, count: Int(count))
+    guard CGGetActiveDisplayList(count, &displayIDs, &count) == .success else {
+        return []
+    }
+
+    return displayIDs.prefix(Int(count)).map { CGDisplayBounds($0) }.filter { !$0.isEmpty }
+}
+
+private func currentDisplayOriginOffset() -> CGPoint {
+    let rects = currentDisplayRects()
+    guard !rects.isEmpty else {
+        return .zero
+    }
+    return CGPoint(
+        x: rects.map { $0.minX }.min() ?? 0,
+        y: rects.map { $0.minY }.min() ?? 0
+    )
+}
+
+private func currentDisplayScreens(preservingSensitivityFrom existingScreens: [ScreenConfig]) -> [ScreenConfig] {
+    let rects = currentDisplayRects()
+    guard !rects.isEmpty else {
+        return []
+    }
+
+    let minX = rects.map { $0.minX }.min() ?? 0
+    let minY = rects.map { $0.minY }.min() ?? 0
+    return rects.enumerated().map { index, rect in
+        ScreenConfig(
+            x: clampedUInt32(Int64(((rect.minX - minX) * screenCoordinateScale).rounded())),
+            y: clampedUInt32(Int64(((rect.minY - minY) * screenCoordinateScale).rounded())),
+            width: clampedUInt32(Int64((rect.width * screenCoordinateScale).rounded())),
+            height: clampedUInt32(Int64((rect.height * screenCoordinateScale).rounded())),
+            sensitivity: index < existingScreens.count ? existingScreens[index].sensitivity : 1000
+        )
+    }
+}
+
+private func looksLikeLegacyScreenGeometry(_ screens: [ScreenConfig]) -> Bool {
+    screens.contains { $0.width >= 10_000_000 || $0.height >= 10_000_000 || $0.x >= 10_000_000 || $0.y >= 10_000_000 }
+}
+
 private func currentCursor(activeScreen: Int8 = -1) -> RuntimeCursor {
     let point = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
+    let offset = currentDisplayOriginOffset()
     return RuntimeCursor(
-        x: Int64(point.x.rounded()),
-        y: Int64(point.y.rounded()),
+        x: Int64(((point.x - offset.x) * screenCoordinateScale).rounded()),
+        y: Int64(((point.y - offset.y) * screenCoordinateScale).rounded()),
         activeScreen: activeScreen
     )
 }

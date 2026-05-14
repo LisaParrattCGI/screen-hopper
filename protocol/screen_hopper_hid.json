@@ -3,7 +3,7 @@
     "vendor_id": "0xCAFE",
     "product_id": "0xBAF3"
   },
-  "config_version": 6,
+  "config_version": 7,
   "report_sizes": {
     "config": 60,
     "runtime": 60
@@ -85,10 +85,10 @@
       ["mouse_config", "5 * fixed16 uint32_le"]
     ],
     "screen": [
-      ["x", "uint32_le"],
-      ["y", "uint32_le"],
-      ["width", "uint32_le"],
-      ["height", "uint32_le"],
+      ["x", "uint32_le screen coordinate, 1000 units per host desktop coordinate unit"],
+      ["y", "uint32_le screen coordinate, 1000 units per host desktop coordinate unit"],
+      ["width", "uint32_le screen coordinate, 1000 units per host desktop coordinate unit"],
+      ["height", "uint32_le screen coordinate, 1000 units per host desktop coordinate unit"],
       ["sensitivity", "uint32_le"]
     ],
     "set_screen": [
@@ -103,8 +103,8 @@
       ["flags", "uint8"]
     ],
     "runtime_cursor": [
-      ["x", "int64_le"],
-      ["y", "int64_le"],
+      ["x", "int64_le screen coordinate, 1000 units per host desktop coordinate unit"],
+      ["y", "int64_le screen coordinate, 1000 units per host desktop coordinate unit"],
       ["active_screen", "int8"]
     ],
     "runtime_status": [

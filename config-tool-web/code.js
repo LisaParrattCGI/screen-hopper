@@ -23,6 +23,7 @@ import {
     REPORT_ID_RUNTIME,
     RESUME,
     RUNTIME_SIZE,
+    SCREEN_COORD_SCALE,
     SET_CONFIG,
     SET_RUNTIME_HOST_CURSOR,
     SET_RUNTIME_MOUSE_CONFIG,
@@ -55,15 +56,15 @@ let config = {
         {
             'x': 0,
             'y': 0,
-            'w': 16000000,
-            'h': 9000000,
+            'w': 1920 * SCREEN_COORD_SCALE,
+            'h': 1080 * SCREEN_COORD_SCALE,
             'sensitivity': 4000
         },
         {
-            'x': 16000000,
+            'x': 1920 * SCREEN_COORD_SCALE,
             'y': 0,
-            'w': 16000000,
-            'h': 9000000,
+            'w': 1920 * SCREEN_COORD_SCALE,
+            'h': 1080 * SCREEN_COORD_SCALE,
             'sensitivity': 4000
         }
     ],
@@ -309,7 +310,7 @@ function set_config_ui_state() {
 
     for (let i = 0; i < 2; i++) {
         for (const param of ['x', 'y', 'w', 'h']) {
-            document.getElementById('screen' + i + '_' + param + '_input').value = config['screens'][i][param];
+            document.getElementById('screen' + i + '_' + param + '_input').value = from_screen_coord(config['screens'][i][param]);
         }
         document.getElementById('screen' + i + '_sensitivity_input').value = config['screens'][i]['sensitivity'] / 1000;
     }
@@ -355,7 +356,7 @@ function add_mapping(mapping) {
 function download_json() {
     clear_error();
     let element = document.createElement('a');
-    element.setAttribute('href', 'data:application/json,' + encodeURIComponent(JSON.stringify(config, null, 4)));
+    element.setAttribute('href', 'data:application/json,' + encodeURIComponent(JSON.stringify(export_config(), null, 4)));
     element.setAttribute('download', 'hid-remapper-config.json');
 
     element.style.display = 'none';
@@ -377,7 +378,7 @@ function file_uploaded() {
         try {
             const new_config = JSON.parse(e.target.result);
             check_version(new_config['version']);
-            config = new_config;
+            config = import_config(new_config);
             set_ui_state();
         } catch (e) {
             display_error(e);
@@ -398,6 +399,54 @@ function fixed16(value) {
 
 function from_fixed16(value) {
     return value / MOUSE_CONFIG_SCALE;
+}
+
+function screen_coord(value) {
+    const numeric = parseFloat(value);
+    if (!Number.isFinite(numeric)) {
+        return 0;
+    }
+    return Math.max(0, Math.min(0xffffffff, Math.round(numeric * SCREEN_COORD_SCALE)));
+}
+
+function from_screen_coord(value) {
+    return value / SCREEN_COORD_SCALE;
+}
+
+function import_screen_coord(value) {
+    const numeric = parseFloat(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+        return 0;
+    }
+    // Accept older exported configs that already used firmware-internal units.
+    if (numeric >= 100000) {
+        return Math.round(numeric);
+    }
+    return screen_coord(numeric);
+}
+
+function import_config(input_config) {
+    const imported = structuredClone(input_config);
+    if (imported['screens'] !== undefined) {
+        for (const screen of imported['screens']) {
+            for (const param of ['x', 'y', 'w', 'h']) {
+                screen[param] = import_screen_coord(screen[param]);
+            }
+        }
+    }
+    return imported;
+}
+
+function export_config() {
+    const exported = structuredClone(config);
+    if (exported['screens'] !== undefined) {
+        for (const screen of exported['screens']) {
+            for (const param of ['x', 'y', 'w', 'h']) {
+                screen[param] = from_screen_coord(screen[param]);
+            }
+        }
+    }
+    return exported;
 }
 
 function mouse_config_fields(mouse_config) {
@@ -658,7 +707,7 @@ function screens_onchange() {
     for (let i = 0; i < 2; i++) {
         for (const param of ['x', 'y', 'w', 'h']) {
             let value = document.getElementById('screen' + i + '_' + param + '_input').value;
-            config['screens'][i][param] = (value === '' ? 0 : parseInt(value, 10));
+            config['screens'][i][param] = (value === '' ? 0 : screen_coord(value));
         }
         let value = document.getElementById('screen' + i + '_sensitivity_input').value;
         if (value === '') {
@@ -681,8 +730,8 @@ async function load_runtime_status() {
         const [x, y, active_screen, placement_active, placement_anchor_pending, tracking_speed, pointer_resolution, frame_rate, fixed_multiplier, placement_tolerance] =
             await read_runtime_feature([INT64, INT64, INT8, UINT8, UINT8, UINT32, UINT32, UINT32, UINT32, UINT32]);
 
-        document.getElementById('runtime_cursor_x_input').value = x;
-        document.getElementById('runtime_cursor_y_input').value = y;
+        document.getElementById('runtime_cursor_x_input').value = from_screen_coord(x);
+        document.getElementById('runtime_cursor_y_input').value = from_screen_coord(y);
         document.getElementById('runtime_active_screen_input').value = active_screen;
         document.getElementById('runtime_status').innerText = 'placement active: ' + !!placement_active + ', anchor pending: ' + !!placement_anchor_pending;
 
@@ -707,8 +756,8 @@ async function apply_runtime_cursor() {
 
     try {
         await send_runtime_command(SET_RUNTIME_HOST_CURSOR, [
-            [INT64, document.getElementById('runtime_cursor_x_input').value || 0],
-            [INT64, document.getElementById('runtime_cursor_y_input').value || 0],
+            [INT64, screen_coord(document.getElementById('runtime_cursor_x_input').value || 0)],
+            [INT64, screen_coord(document.getElementById('runtime_cursor_y_input').value || 0)],
             [INT8, document.getElementById('runtime_active_screen_input').value || -1],
         ]);
         await load_runtime_status();

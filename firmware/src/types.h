@@ -6,7 +6,7 @@
 #define SCREEN_HOPPER_VENDOR_ID 0xCAFE
 #define SCREEN_HOPPER_PRODUCT_ID 0xBAF3
 
-#define CONFIG_VERSION 6
+#define CONFIG_VERSION 7
 #define CONFIG_SIZE 60
 #define RUNTIME_SIZE 60
 
@@ -27,6 +27,9 @@
 #define MAPPING_FLAG_STICKY 0x01
 
 #define MOUSE_CONFIG_SCALE 65536
+#define ADVERTISED_POINTER_RESOLUTION_COUNTS_PER_INCH 400
+#define ADVERTISED_POINTER_RESOLUTION_FIXED (ADVERTISED_POINTER_RESOLUTION_COUNTS_PER_INCH * MOUSE_CONFIG_SCALE)
+#define SCREEN_COORD_SCALE 1000
 #define NSCREENS 2
 
 enum class ConfigCommand : int8_t {
@@ -61,6 +64,7 @@ struct usage_def_t {
     bool is_relative;
     bool is_array = false;
     int32_t logical_minimum;
+    uint32_t pointer_resolution;
     uint32_t index = 0;  // for arrays
     uint32_t count = 0;  // for arrays
 };

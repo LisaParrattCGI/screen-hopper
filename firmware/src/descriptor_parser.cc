@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <deque>
+#include <limits>
 
 #include "descriptor_parser.h"
 #include "globals.h"
@@ -18,19 +19,109 @@ const uint8_t HID_USAGE_MINIMUM = 0x18;
 const uint8_t HID_USAGE_MAXIMUM = 0x28;
 const uint8_t HID_LOGICAL_MINIMUM = 0x14;
 const uint8_t HID_LOGICAL_MAXIMUM = 0x24;
+const uint8_t HID_PHYSICAL_MINIMUM = 0x34;
+const uint8_t HID_PHYSICAL_MAXIMUM = 0x44;
+const uint8_t HID_UNIT_EXPONENT = 0x54;
+const uint8_t HID_UNIT = 0x64;
+const uint32_t MOUSE_X_USAGE = 0x00010030;
+const uint32_t MOUSE_Y_USAGE = 0x00010031;
+const uint32_t HID_UNIT_ENGLISH_LINEAR_INCH = 0x13;
 
-void mark_usage(std::unordered_map<uint8_t, std::unordered_map<uint32_t, usage_def_t>>& usage_map, uint32_t usage, uint8_t report_id, uint16_t bitpos, uint8_t size, bool is_relative, int32_t logical_minimum, bool is_array = false, uint32_t index = 0, uint32_t count = 0) {
+int32_t sign_extend(uint32_t value, uint8_t item_size) {
+    if (item_size == 0) {
+        return 0;
+    }
+    uint8_t bits = item_size * 8;
+    if (bits >= 32) {
+        return (int32_t) value;
+    }
+
+    uint32_t sign_bit = (uint32_t) 1 << (bits - 1);
+    if (value & sign_bit) {
+        value |= std::numeric_limits<uint32_t>::max() << bits;
+    }
+    return (int32_t) value;
+}
+
+int8_t decode_unit_exponent(uint32_t value, uint8_t item_size) {
+    if (item_size == 1 && (value & 0xF0) == 0) {
+        uint8_t nibble = value & 0x0F;
+        return (int8_t) ((nibble & 0x08) ? (nibble | 0xF0) : nibble);
+    }
+    return (int8_t) sign_extend(value, item_size);
+}
+
+uint32_t pow10_u32(uint8_t exponent) {
+    uint32_t result = 1;
+    while (exponent--) {
+        if (result > std::numeric_limits<uint32_t>::max() / 10) {
+            return 0;
+        }
+        result *= 10;
+    }
+    return result;
+}
+
+uint32_t pointer_resolution_for_usage(uint32_t usage,
+                                      bool is_relative,
+                                      int32_t logical_minimum,
+                                      int32_t logical_maximum,
+                                      int32_t physical_minimum,
+                                      int32_t physical_maximum,
+                                      int8_t unit_exponent,
+                                      uint32_t unit) {
+    if (!is_relative || (usage != MOUSE_X_USAGE && usage != MOUSE_Y_USAGE)) {
+        return 0;
+    }
+    if (unit != HID_UNIT_ENGLISH_LINEAR_INCH ||
+        logical_maximum <= logical_minimum ||
+        physical_maximum <= physical_minimum) {
+        return 0;
+    }
+
+    uint64_t logical_range = (uint64_t) ((int64_t) logical_maximum - logical_minimum);
+    uint64_t physical_range = (uint64_t) ((int64_t) physical_maximum - physical_minimum);
+    uint64_t numerator = logical_range * MOUSE_CONFIG_SCALE;
+    uint64_t denominator = physical_range;
+
+    if (unit_exponent < 0) {
+        uint32_t multiplier = pow10_u32((uint8_t) -unit_exponent);
+        if (multiplier == 0 || numerator > std::numeric_limits<uint64_t>::max() / multiplier) {
+            return 0;
+        }
+        numerator *= multiplier;
+    } else if (unit_exponent > 0) {
+        uint32_t multiplier = pow10_u32((uint8_t) unit_exponent);
+        if (multiplier == 0 || denominator > std::numeric_limits<uint64_t>::max() / multiplier) {
+            return 0;
+        }
+        denominator *= multiplier;
+    }
+
+    if (denominator == 0) {
+        return 0;
+    }
+
+    uint64_t resolution = (numerator + denominator / 2) / denominator;
+    if (resolution > std::numeric_limits<uint32_t>::max()) {
+        return 0;
+    }
+    return (uint32_t) resolution;
+}
+
+void mark_usage(std::unordered_map<uint8_t, std::unordered_map<uint32_t, usage_def_t>>& usage_map, uint32_t usage, uint8_t report_id, uint16_t bitpos, uint8_t size, bool is_relative, int32_t logical_minimum, uint32_t pointer_resolution, bool is_array = false, uint32_t index = 0, uint32_t count = 0) {
     usage_map[report_id].try_emplace(usage,
-        (usage_def_t){
-            .report_id = report_id,
-            .size = size,
-            .bitpos = bitpos,
-            .is_relative = is_relative,
-            .is_array = is_array,
-            .logical_minimum = logical_minimum,
-            .index = index,
-            .count = count,
-        });
+                                     (usage_def_t) {
+                                         .report_id = report_id,
+                                         .size = size,
+                                         .bitpos = bitpos,
+                                         .is_relative = is_relative,
+                                         .is_array = is_array,
+                                         .logical_minimum = logical_minimum,
+                                         .pointer_resolution = pointer_resolution,
+                                         .index = index,
+                                         .count = count,
+                                     });
 }
 
 void assign_interface_index(uint16_t interface) {
@@ -71,10 +162,14 @@ std::unordered_map<uint8_t, uint16_t> parse_descriptor(std::unordered_map<uint8_
     uint32_t usage_maximum = 0;
     int32_t logical_minimum = 0;
     int32_t logical_maximum = 0;
+    int32_t physical_minimum = 0;
+    int32_t physical_maximum = 0;
+    int8_t unit_exponent = 0;
+    uint32_t unit = 0;
 
     while (idx < len) {
         if (report_descriptor[idx] == 0 && idx == len - 1) {
-            continue;
+            break;
         }
 
         uint8_t item = report_descriptor[idx] & 0xFC;
@@ -85,7 +180,7 @@ std::unordered_map<uint8_t, uint16_t> parse_descriptor(std::unordered_map<uint8_
         uint32_t value = 0;
         idx++;
         for (int i = 0; i < item_size; i++) {
-            value |= report_descriptor[idx++] << (i * 8);
+            value |= (uint32_t) report_descriptor[idx++] << (i * 8);
         }
 
         switch (item) {
@@ -97,7 +192,8 @@ std::unordered_map<uint8_t, uint16_t> parse_descriptor(std::unordered_map<uint8_
                     if (usage_minimum && usage_maximum) {
                         uint32_t usage = usage_minimum;
                         for (uint32_t i = 0; i < report_count; i++) {
-                            mark_usage(usage_map, usage, report_id, bitpos[report_id], report_size, relative, logical_minimum);
+                            mark_usage(usage_map, usage, report_id, bitpos[report_id], report_size, relative, logical_minimum,
+                                       pointer_resolution_for_usage(usage, relative, logical_minimum, logical_maximum, physical_minimum, physical_maximum, unit_exponent, unit));
                             if (usage < usage_maximum) {
                                 usage++;
                             }
@@ -110,7 +206,8 @@ std::unordered_map<uint8_t, uint16_t> parse_descriptor(std::unordered_map<uint8_
                                 usage = usages.front();
                                 usages.pop_front();
                             }
-                            mark_usage(usage_map, usage, report_id, bitpos[report_id], report_size, relative, logical_minimum);
+                            mark_usage(usage_map, usage, report_id, bitpos[report_id], report_size, relative, logical_minimum,
+                                       pointer_resolution_for_usage(usage, relative, logical_minimum, logical_maximum, physical_minimum, physical_maximum, unit_exponent, unit));
                             bitpos[report_id] += report_size;
                         }
                     } else {
@@ -120,7 +217,7 @@ std::unordered_map<uint8_t, uint16_t> parse_descriptor(std::unordered_map<uint8_
                     if (usage_minimum && usage_maximum) {
                         uint32_t usage = usage_minimum;
                         for (int index = logical_minimum; index <= logical_maximum; index++) {
-                            mark_usage(usage_map, usage, report_id, bitpos[report_id], report_size, relative, logical_minimum, true, index, report_count);
+                            mark_usage(usage_map, usage, report_id, bitpos[report_id], report_size, relative, logical_minimum, 0, true, index, report_count);
                             if (usage < usage_maximum) {
                                 usage++;
                             }
@@ -132,7 +229,7 @@ std::unordered_map<uint8_t, uint16_t> parse_descriptor(std::unordered_map<uint8_
                                 usage = usages.front();
                                 usages.pop_front();
                             }
-                            mark_usage(usage_map, usage, report_id, bitpos[report_id], report_size, relative, logical_minimum, true, index, report_count);
+                            mark_usage(usage_map, usage, report_id, bitpos[report_id], report_size, relative, logical_minimum, 0, true, index, report_count);
                         }
                     }
                     bitpos[report_id] += report_size * report_count;
@@ -189,14 +286,27 @@ std::unordered_map<uint8_t, uint16_t> parse_descriptor(std::unordered_map<uint8_
             }
             case HID_LOGICAL_MINIMUM:
                 printf("Logical minimum %0lx\n", value);
-                logical_minimum = value;
-                if (logical_minimum & (1 << (item_size * 8 - 1))) {
-                    logical_minimum |= 0xFFFFFFFF << item_size * 8;
-                }
+                logical_minimum = sign_extend(value, item_size);
                 break;
             case HID_LOGICAL_MAXIMUM:
                 printf("Logical maximum %0lx\n", value);
                 logical_maximum = value;
+                break;
+            case HID_PHYSICAL_MINIMUM:
+                printf("Physical minimum %0lx\n", value);
+                physical_minimum = sign_extend(value, item_size);
+                break;
+            case HID_PHYSICAL_MAXIMUM:
+                printf("Physical maximum %0lx\n", value);
+                physical_maximum = sign_extend(value, item_size);
+                break;
+            case HID_UNIT_EXPONENT:
+                printf("Unit exponent %0lx\n", value);
+                unit_exponent = decode_unit_exponent(value, item_size);
+                break;
+            case HID_UNIT:
+                printf("Unit %0lx\n", value);
+                unit = value;
                 break;
         }
     }

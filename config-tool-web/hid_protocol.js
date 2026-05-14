@@ -8,13 +8,14 @@ export const UNMAPPED_PASSTHROUGH_FLAG = 0x01;
 export const STICKY_FLAG = 0x01;
 export const CONFIG_SIZE = 60;
 export const RUNTIME_SIZE = 60;
-export const CONFIG_VERSION = 6;
+export const CONFIG_VERSION = 7;
 export const VENDOR_ID = 0xCAFE;
 export const PRODUCT_ID = 0xBAF3;
 export const DEFAULT_PARTIAL_SCROLL_TIMEOUT = 1000000;
 export const DEFAULT_SCALING = 1000;
 export const DEFAULT_SENSITIVITY = 1000;
 export const MOUSE_CONFIG_SCALE = 65536;
+export const SCREEN_COORD_SCALE = 1000;
 export const SCREEN_COUNT = 2;
 
 export const SET_CONFIG = 2;

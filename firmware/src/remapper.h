@@ -7,6 +7,7 @@
 
 void set_mapping_from_config();
 void handle_received_report(const uint8_t* report, int len, uint16_t interface);
+void clear_pointer_resolution_remainders(uint8_t dev_addr);
 
 void extra_init();
 bool read_report();

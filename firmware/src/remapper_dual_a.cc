@@ -20,6 +20,7 @@ void serial_callback(const uint8_t* data, uint16_t len) {
         case DualCommand::DEVICE_DISCONNECTED: {
             device_disconnected_t* msg = (device_disconnected_t*) data;
             clear_descriptor_data(msg->dev_addr);
+            clear_pointer_resolution_remainders(msg->dev_addr);
             break;
         }
         case DualCommand::REPORT_RECEIVED: {

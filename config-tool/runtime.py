@@ -19,6 +19,7 @@ from hid_protocol import (
     RUNTIME_COMMAND_SET_HOST_CURSOR as SET_HOST_CURSOR,
     RUNTIME_COMMAND_SET_MOUSE_CONFIG as SET_MOUSE_CONFIG,
     RUNTIME_SIZE,
+    SCREEN_COORD_SCALE,
     VENDOR_ID,
     open_runtime_device,
     read_feature_payload,
@@ -32,6 +33,14 @@ def fixed16(value):
 
 def from_fixed16(value):
     return value / MOUSE_CONFIG_SCALE
+
+
+def screen_coord(value):
+    return round(float(value) * SCREEN_COORD_SCALE)
+
+
+def from_screen_coord(value):
+    return value / SCREEN_COORD_SCALE
 
 
 def mouse_config_payload(config):
@@ -81,8 +90,8 @@ def get_status(device):
     x, y, active_screen, placement_active, placement_anchor_pending, *mouse_values = struct.unpack_from("<qqbBB5L", payload)
     return {
         "cursor": {
-            "x": x,
-            "y": y,
+            "x": from_screen_coord(x),
+            "y": from_screen_coord(y),
             "active_screen": active_screen,
             "placement_active": bool(placement_active),
             "placement_anchor_pending": bool(placement_anchor_pending),
@@ -98,8 +107,8 @@ def main():
     subparsers.add_parser("get", help="print the current runtime cursor and mouse settings")
 
     set_cursor = subparsers.add_parser("set-cursor", help="set the cursor position observed by the host")
-    set_cursor.add_argument("x", type=int)
-    set_cursor.add_argument("y", type=int)
+    set_cursor.add_argument("x", type=float)
+    set_cursor.add_argument("y", type=float)
     set_cursor.add_argument("active_screen", type=int, nargs="?", default=-1)
 
     subparsers.add_parser("set-mouse", help="read mouse settings JSON from stdin and apply them without persisting")
@@ -111,7 +120,7 @@ def main():
     if args.command == "get":
         print(json.dumps(get_status(device), indent=2))
     elif args.command == "set-cursor":
-        send_command(device, SET_HOST_CURSOR, struct.pack("<qqb", args.x, args.y, args.active_screen))
+        send_command(device, SET_HOST_CURSOR, struct.pack("<qqb", screen_coord(args.x), screen_coord(args.y), args.active_screen))
         print(json.dumps(get_status(device), indent=2))
     elif args.command == "set-mouse":
         config = json.load(sys.stdin)
