@@ -64,6 +64,7 @@ struct usage_def_t {
     bool is_relative;
     bool is_array = false;
     int32_t logical_minimum;
+    uint32_t pointer_resolution;
     uint32_t index = 0;  // for arrays
     uint32_t count = 0;  // for arrays
 };
