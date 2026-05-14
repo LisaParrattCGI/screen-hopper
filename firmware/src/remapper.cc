@@ -80,6 +80,7 @@ std::unordered_map<uint32_t, int32_t> input_state;
 std::unordered_map<uint32_t, int32_t> prev_input_state;
 std::unordered_map<uint64_t, int32_t> sticky_state;  // layer << 32 | usage -> state
 std::unordered_map<uint32_t, int32_t> accumulated;   // * 1000
+std::unordered_map<uint64_t, int64_t> pointer_resolution_remainder;
 
 std::vector<uint32_t> relative_usages;
 std::unordered_set<uint32_t> relative_usage_set;
@@ -144,6 +145,30 @@ int16_t clamp_relative_axis(int64_t value) {
     return (int16_t) value;
 }
 
+uint64_t interface_usage_key(uint16_t interface, uint32_t usage) {
+    return ((uint64_t) interface << 32) | usage;
+}
+
+uint32_t advertised_pointer_resolution(uint32_t usage) {
+    (void) usage;
+    return ADVERTISED_POINTER_RESOLUTION_FIXED;
+}
+
+int32_t translate_pointer_resolution(uint32_t usage, const usage_def_t& usage_def, uint16_t interface, int32_t value) {
+    uint32_t target_resolution = advertised_pointer_resolution(usage);
+    if ((usage != MOUSE_X_USAGE && usage != MOUSE_Y_USAGE) ||
+        usage_def.pointer_resolution == 0 ||
+        usage_def.pointer_resolution == target_resolution) {
+        return value;
+    }
+
+    uint64_t key = interface_usage_key(interface, usage);
+    int64_t scaled = (int64_t) value * target_resolution + pointer_resolution_remainder[key];
+    int32_t translated = (int32_t) (scaled / (int64_t) usage_def.pointer_resolution);
+    pointer_resolution_remainder[key] = scaled - (int64_t) translated * usage_def.pointer_resolution;
+    return translated;
+}
+
 int16_t consume_relative_axis_movement(uint32_t usage) {
     // accumulated is mapping-scaled fixed point where 1000 is one HID count.
     // Do not apply screen sensitivity here: X/Y reports should stay as close as
@@ -158,6 +183,20 @@ int16_t consume_relative_axis_movement(uint32_t usage) {
     int64_t consumed = (int64_t) report_delta * 1000;
     accumulated[usage] -= (int32_t) consumed;
     return report_delta;
+}
+
+void clear_pointer_resolution_remainders(uint8_t dev_addr) {
+    uint16_t interface_prefix = (uint16_t) dev_addr << 8;
+    uint64_t min_key = (uint64_t) interface_prefix << 32;
+    uint64_t max_key = (uint64_t) (interface_prefix | 0xFF) << 32 | 0xFFFFFFFF;
+
+    for (auto it = pointer_resolution_remainder.cbegin(); it != pointer_resolution_remainder.cend();) {
+        if (it->first >= min_key && it->first <= max_key) {
+            it = pointer_resolution_remainder.erase(it);
+        } else {
+            it++;
+        }
+    }
 }
 
 int32_t handle_scroll(uint32_t source_usage, uint32_t target_usage, int32_t movement) {
@@ -888,7 +927,7 @@ inline void read_input(const uint8_t* report, int len, uint32_t source_usage, co
     }
 
     if (their_usage.is_relative) {
-        input_state[source_usage] = value;
+        input_state[source_usage] = translate_pointer_resolution(source_usage, their_usage, interface, value);
     } else {
         if (value) {
             input_state[source_usage] |= 1 << interface_index[interface];
