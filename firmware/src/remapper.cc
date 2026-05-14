@@ -126,23 +126,30 @@ int64_t consume_fractional_cursor_delta(double delta, double& fraction) {
     return whole;
 }
 
-int64_t consume_scaled_axis_movement(uint32_t usage, uint32_t sensitivity) {
-    if (sensitivity == 0) {
-        return 0;
+int16_t clamp_relative_axis(int64_t value) {
+    if (value > std::numeric_limits<int16_t>::max()) {
+        return std::numeric_limits<int16_t>::max();
     }
+    if (value < std::numeric_limits<int16_t>::min()) {
+        return std::numeric_limits<int16_t>::min();
+    }
+    return (int16_t) value;
+}
 
-    int32_t raw_accumulated = accumulated[usage];
-    int64_t delta = (int64_t) raw_accumulated * sensitivity / 1000;
+int16_t consume_relative_axis_movement(uint32_t usage) {
+    // accumulated is mapping-scaled fixed point where 1000 is one HID count.
+    // Do not apply screen sensitivity here: X/Y reports should stay as close as
+    // possible to the input HID stream and let the host apply its own pointer model.
+    int64_t raw_accumulated = accumulated[usage];
+    int64_t delta = raw_accumulated / 1000;
     if (delta == 0) {
         return 0;
     }
 
-    int64_t consumed = delta * 1000 / sensitivity;
-    if (consumed == 0) {
-        consumed = raw_accumulated > 0 ? 1 : -1;
-    }
+    int16_t report_delta = clamp_relative_axis(delta);
+    int64_t consumed = (int64_t) report_delta * 1000;
     accumulated[usage] -= (int32_t) consumed;
-    return delta;
+    return report_delta;
 }
 
 int32_t handle_scroll(uint32_t source_usage, uint32_t target_usage, int32_t movement) {
@@ -196,16 +203,6 @@ inline void put_bits(uint8_t* data, int len, uint16_t bitpos, uint8_t size, uint
     for (int i = 0; i < size; i++) {
         put_bit(data, len, bitpos + i, (value >> i) & 1);
     }
-}
-
-int16_t clamp_relative_axis(int64_t value) {
-    if (value > std::numeric_limits<int16_t>::max()) {
-        return std::numeric_limits<int16_t>::max();
-    }
-    if (value < std::numeric_limits<int16_t>::min()) {
-        return std::numeric_limits<int16_t>::min();
-    }
-    return (int16_t) value;
 }
 
 double abs_double(double value) {
@@ -696,9 +693,10 @@ void process_mapping(bool auto_repeat) {
         input_state[usage] = 0;
     }
 
-    int64_t dx = consume_scaled_axis_movement(MOUSE_X_USAGE, screens[active_screen].sensitivity);
-    int64_t dy = consume_scaled_axis_movement(MOUSE_Y_USAGE, screens[active_screen].sensitivity);
+    int16_t dx = consume_relative_axis_movement(MOUSE_X_USAGE);
+    int16_t dy = consume_relative_axis_movement(MOUSE_Y_USAGE);
 
+    // Track the same relative report that will be sent to the host.
     // Apple accelerates the vector magnitude once, then applies that scalar to both axes.
     macos_delta_t accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
     int64_t accelerated_dx = consume_fractional_cursor_delta(accelerated.dx, cursor_fraction_x);
@@ -760,7 +758,7 @@ void process_mapping(bool auto_repeat) {
     // Prepare relative movement report (always use REPORT_ID_MOUSE_RELATIVE for cursor movement)
     // Send raw dx/dy (not accelerated) - macOS will apply its own acceleration
     if (active_screen != -1 && !movement_absorbed_by_placement && (dx != 0 || dy != 0)) {
-        queue_mouse_relative(active_screen, clamp_relative_axis(dx), clamp_relative_axis(dy), true);
+        queue_mouse_relative(active_screen, dx, dy, true);
     }
 
     // Handle buttons and scrolling via REPORT_ID_MOUSE_RELATIVE

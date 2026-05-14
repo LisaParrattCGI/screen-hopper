@@ -327,6 +327,7 @@ private final class ScreenHopperDevice {
 
 private final class DeviceLocator {
     private let manager: IOHIDManager
+    private var lastProbeError: String?
 
     init() {
         manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -335,16 +336,37 @@ private final class DeviceLocator {
             kIOHIDProductIDKey as String: productID,
         ]
         IOHIDManagerSetDeviceMatching(manager, match as CFDictionary)
+        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
         IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
     }
 
+    var disconnectedMessage: String {
+        lastProbeError ?? "Screen Hopper: disconnected"
+    }
+
     func findRuntimeDevice() -> ScreenHopperDevice? {
+        lastProbeError = nil
+
         guard let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else {
+            lastProbeError = "Screen Hopper: no matching HID devices"
+            return nil
+        }
+
+        if devices.isEmpty {
+            lastProbeError = "Screen Hopper: no matching HID devices"
             return nil
         }
 
         for device in devices {
-            if IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone)) != kIOReturnSuccess {
+            if let maxFeatureSize = intProperty(device, "MaxFeatureReportSize" as CFString),
+               maxFeatureSize > 0,
+               maxFeatureSize < runtimeSize {
+                continue
+            }
+
+            let openResult = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
+            if openResult != kIOReturnSuccess {
+                lastProbeError = "\(deviceSummary(device)): open failed \(hex(openResult))"
                 continue
             }
 
@@ -354,11 +376,17 @@ private final class DeviceLocator {
                     try probe(candidate, device: device, mode: mode)
                     return candidate
                 } catch {
+                    lastProbeError = "\(deviceSummary(device)): \(error)"
                     continue
                 }
             }
+
+            IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
         }
 
+        if lastProbeError == nil {
+            lastProbeError = "Screen Hopper: runtime feature report not found"
+        }
         return nil
     }
 
@@ -402,6 +430,27 @@ private final class DeviceLocator {
             throw LiveSyncError.invalidCRC
         }
     }
+
+    private func deviceSummary(_ device: IOHIDDevice) -> String {
+        let product = IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String ?? "Screen Hopper"
+        let usagePage = intProperty(device, kIOHIDPrimaryUsagePageKey as CFString)
+        let usage = intProperty(device, kIOHIDPrimaryUsageKey as CFString)
+
+        if let usagePage, let usage {
+            return "\(product) usage \(usagePage):\(usage)"
+        }
+        return product
+    }
+
+    private func intProperty(_ device: IOHIDDevice, _ key: CFString) -> Int? {
+        guard let value = IOHIDDeviceGetProperty(device, key) else {
+            return nil
+        }
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        return nil
+    }
 }
 
 private final class MouseConfigReader {
@@ -416,6 +465,7 @@ private final class MouseConfigReader {
             kIOHIDDeviceUsageKey as String: kHIDUsage_GD_Mouse,
         ]
         IOHIDManagerSetDeviceMatching(mouseManager, match as CFDictionary)
+        IOHIDManagerScheduleWithRunLoop(mouseManager, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
         IOHIDManagerOpen(mouseManager, IOOptionBits(kIOHIDOptionsTypeNone))
     }
 
@@ -1369,7 +1419,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         }
 
         guard let device else {
-            showAlert(title: "Screen Hopper Not Found", message: "Connect Screen Hopper and try again.")
+            showAlert(title: "Screen Hopper Not Found", message: locator.disconnectedMessage)
             return
         }
 
@@ -1393,7 +1443,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         }
 
         guard let device else {
-            updateMenu(connected: false, message: "Screen Hopper: disconnected")
+            updateMenu(connected: false, message: locator.disconnectedMessage)
             return
         }
 
@@ -1410,7 +1460,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             updateMenu(connected: true, message: menuSummary(config: config, cursor: cursor))
         } catch {
             self.device = nil
-            updateMenu(connected: false, message: "Screen Hopper: reconnecting")
+            updateMenu(connected: false, message: "Screen Hopper: \(briefError(error))")
         }
     }
 
@@ -1515,6 +1565,29 @@ private func clampedUInt32(_ value: Int64) -> UInt32 {
         return UInt32.max
     }
     return UInt32(value)
+}
+
+private func hex(_ value: IOReturn) -> String {
+    String(format: "0x%08X", UInt32(bitPattern: value))
+}
+
+private func briefError(_ error: Error) -> String {
+    switch error {
+    case LiveSyncError.hidSetReportFailed(let code):
+        return "set report failed \(hex(code))"
+    case LiveSyncError.hidGetReportFailed(let code):
+        return "get report failed \(hex(code))"
+    case LiveSyncError.incompatibleConfigVersion(let version):
+        return "config version \(version) unsupported"
+    case LiveSyncError.invalidReport:
+        return "invalid runtime report"
+    case LiveSyncError.invalidCRC:
+        return "runtime report CRC failed"
+    case LiveSyncError.payloadTooLarge:
+        return "runtime payload too large"
+    default:
+        return "\(error)"
+    }
 }
 
 private func decimalString(_ value: Double) -> String {
