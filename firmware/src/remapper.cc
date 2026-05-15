@@ -612,23 +612,17 @@ void get_runtime_placement_flags(uint8_t& placement_active, uint8_t& placement_a
 }
 
 void set_cursor_from_host(const runtime_cursor_t& cursor) {
-    cursor_x = cursor.x;
-    cursor_y = cursor.y;
+    if (cursor.active_screen < 0 || cursor.active_screen >= NSCREENS || cursor.active_screen != active_screen) {
+        return;
+    }
+
+    const screen_def_t& screen = screens[active_screen];
+    cursor_x = (int64_t) screen.x + cursor.x;
+    cursor_y = (int64_t) screen.y + cursor.y;
     cursor_fraction_x = 0.0;
     cursor_fraction_y = 0.0;
     cursor_placement.active = false;
     cursor_placement.anchor_pending = false;
-
-    if (cursor.active_screen >= 0 && cursor.active_screen < NSCREENS) {
-        active_screen = cursor.active_screen;
-        update_active_screen_leds();
-        return;
-    }
-
-    int8_t derived_active_screen = -1;
-    within_bounds(cursor_x, cursor_y, derived_active_screen);
-    active_screen = derived_active_screen;
-    update_active_screen_leds();
 }
 
 void process_mapping(bool auto_repeat) {

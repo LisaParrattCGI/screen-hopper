@@ -357,8 +357,10 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
             last_runtime_command = runtime_buffer->command;
             switch (runtime_buffer->command) {
                 case RuntimeCommand::SET_HOST_CURSOR: {
-                    runtime_cursor_t* cursor = (runtime_cursor_t*) runtime_buffer->data;
-                    set_cursor_from_host(*cursor);
+                    runtime_cursor_t cursor;
+                    memcpy(&cursor, runtime_buffer->data, sizeof(cursor));
+                    cursor.active_screen = 0;
+                    set_cursor_from_host(cursor);
                     last_runtime_command = RuntimeCommand::GET_STATUS;
                     break;
                 }

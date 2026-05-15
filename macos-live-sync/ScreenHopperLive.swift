@@ -1392,10 +1392,10 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         root.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(root)
 
-        root.addArrangedSubview(debugSection(title: "Host Global Cursor", rows: [
+        root.addArrangedSubview(debugSection(title: "Host Screen Cursor", rows: [
             ("X", hostXLabel),
             ("Y", hostYLabel),
-            ("Active screen", hostScreenLabel),
+            ("Reported screen", hostScreenLabel),
         ]))
         root.addArrangedSubview(debugSection(title: "Screen Hopper Runtime", rows: [
             ("X", deviceXLabel),
@@ -1871,6 +1871,26 @@ private func currentDisplayOriginOffset() -> CGPoint {
     )
 }
 
+private func currentDisplayLocalCursor(activeScreen: Int8 = -1) -> RuntimeCursor {
+    let point = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
+    let rects = currentDisplayRects()
+
+    for rect in rects where rect.contains(point) {
+        return RuntimeCursor(
+            x: Int64(((point.x - rect.minX) * screenCoordinateScale).rounded()),
+            y: Int64(((point.y - rect.minY) * screenCoordinateScale).rounded()),
+            activeScreen: activeScreen
+        )
+    }
+
+    let offset = currentDisplayOriginOffset()
+    return RuntimeCursor(
+        x: Int64(((point.x - offset.x) * screenCoordinateScale).rounded()),
+        y: Int64(((point.y - offset.y) * screenCoordinateScale).rounded()),
+        activeScreen: activeScreen
+    )
+}
+
 private func currentDisplayScreens(preservingSensitivityFrom existingScreens: [ScreenConfig]) -> [ScreenConfig] {
     let rects = currentDisplayRects()
     guard !rects.isEmpty else {
@@ -1895,13 +1915,7 @@ private func looksLikeLegacyScreenGeometry(_ screens: [ScreenConfig]) -> Bool {
 }
 
 private func currentCursor(activeScreen: Int8 = -1) -> RuntimeCursor {
-    let point = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
-    let offset = currentDisplayOriginOffset()
-    return RuntimeCursor(
-        x: Int64(((point.x - offset.x) * screenCoordinateScale).rounded()),
-        y: Int64(((point.y - offset.y) * screenCoordinateScale).rounded()),
-        activeScreen: activeScreen
-    )
+    currentDisplayLocalCursor(activeScreen: activeScreen)
 }
 
 private func parseOptions() -> Options {
