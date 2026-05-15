@@ -829,7 +829,7 @@ void process_mapping(bool auto_repeat) {
     // Prepare relative movement report (always use REPORT_ID_MOUSE_RELATIVE for cursor movement)
     // Send raw dx/dy (not accelerated) - macOS will apply its own acceleration
     if (active_screen != -1 && !movement_absorbed_by_placement && (dx != 0 || dy != 0)) {
-        queue_mouse_relative(active_screen, dx, dy, true);
+        queue_mouse_relative(active_screen, dx, dy, false);
     }
 
     // Handle buttons and scrolling via REPORT_ID_MOUSE_RELATIVE

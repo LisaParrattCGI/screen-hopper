@@ -1415,7 +1415,7 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         root.addArrangedSubview(debugSection(title: "Host Screen Cursor", rows: [
             ("X", hostXLabel),
             ("Y", hostYLabel),
-            ("Reported screen", hostScreenLabel),
+            ("Report screen override", hostScreenLabel),
         ]))
         root.addArrangedSubview(debugSection(title: "Screen Hopper Runtime", rows: [
             ("X", deviceXLabel),
