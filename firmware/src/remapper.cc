@@ -133,6 +133,8 @@ struct cursor_placement_t {
 cursor_placement_t cursor_placement = {};
 
 void apply_cursor_delta(int64_t dx, int64_t dy, bool& screen_changed);
+bool differ_on_absolute(const uint8_t* report1, const uint8_t* report2, uint8_t report_id);
+void aggregate_relative(uint8_t* prev_report, const uint8_t* report, uint8_t report_id);
 
 int64_t consume_fractional_cursor_delta(double delta, double& fraction) {
     fraction += delta;
