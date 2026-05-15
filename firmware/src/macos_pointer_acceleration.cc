@@ -30,6 +30,16 @@ struct macos_curve_t {
     double tangent_root;
 };
 
+struct macos_curve_secondary_t {
+    int first_tangent;
+    double m0;
+    double b0;
+    double y0;
+    double y1;
+    double m_root;
+    double b_root;
+};
+
 const macos_curve_fixed_t MACOS_ACCEL_CURVES[] = {
     { 0, 65536, 0, 0, 0, 524288, 0 },
     { 8192, 60293, 26214, 5243, 0, 537395, 1245184 },
@@ -122,40 +132,38 @@ double macos_curve_segment1_slope(const macos_curve_t& curve, double value) {
            4.0 * cube(value) * fourth_power(curve.gain_quartic);
 }
 
-double macos_curve_value(const macos_curve_t& curve, double value) {
-    double tangent0 = std::numeric_limits<double>::infinity();
-    double tangent1 = std::numeric_limits<double>::infinity();
-    double m0 = 0.0;
-    double b0 = 0.0;
-    double m1 = 0.0;
-    double b1 = 0.0;
-
-    if (curve.tangent_linear != 0.0) {
-        double y0 = macos_curve_segment1(curve, curve.tangent_linear);
-        m0 = macos_curve_segment1_slope(curve, curve.tangent_linear);
-        b0 = y0 - m0 * curve.tangent_linear;
-        tangent0 = curve.tangent_linear;
-
-        if (curve.tangent_root != 0.0) {
-            double y1 = m0 * curve.tangent_root + b0;
-            m1 = 2.0 * y1 * m0;
-            b1 = y1 * y1 - m1 * curve.tangent_root;
-            tangent1 = curve.tangent_root;
-        }
-    } else if (curve.tangent_root != 0.0) {
-        double y0 = macos_curve_segment1(curve, curve.tangent_root);
-        m1 = macos_curve_segment1_slope(curve, curve.tangent_root);
-        b1 = y0 * y0 - m1 * curve.tangent_root;
-        tangent0 = curve.tangent_root;
+macos_curve_secondary_t macos_curve_secondary(const macos_curve_t& curve) {
+    macos_curve_secondary_t secondary = {};
+    if (curve.tangent_root > 0.0 && curve.tangent_root < curve.tangent_linear) {
+        secondary.first_tangent = 1;
     }
 
-    if (value <= tangent0) {
+    if (secondary.first_tangent == 0) {
+        secondary.y0 = macos_curve_segment1(curve, curve.tangent_linear);
+        secondary.m0 = macos_curve_segment1_slope(curve, curve.tangent_linear);
+        secondary.b0 = secondary.y0 - secondary.m0 * curve.tangent_linear;
+        secondary.y1 = secondary.m0 * curve.tangent_root + secondary.b0;
+    } else {
+        secondary.y1 = macos_curve_segment1(curve, curve.tangent_root);
+        secondary.m0 = macos_curve_segment1_slope(curve, curve.tangent_root);
+    }
+
+    secondary.m_root = secondary.m0 * secondary.y1 * 2.0;
+    secondary.b_root = square(secondary.y1) - secondary.m_root * curve.tangent_root;
+    return secondary;
+}
+
+double macos_curve_value(const macos_curve_t& curve, double value) {
+    macos_curve_secondary_t secondary = macos_curve_secondary(curve);
+    double first_tangent = secondary.first_tangent == 0 ? curve.tangent_linear : curve.tangent_root;
+
+    if (first_tangent != 0.0 && value <= first_tangent) {
         return macos_curve_segment1(curve, value);
     }
-    if (value <= tangent1 && tangent0 == curve.tangent_linear) {
-        return m0 * value + b0;
+    if (secondary.first_tangent == 0 && curve.tangent_root != 0.0 && value <= curve.tangent_root) {
+        return secondary.m0 * value + secondary.b0;
     }
-    return std::sqrt(m1 * value + b1);
+    return std::sqrt(secondary.m_root * value + secondary.b_root);
 }
 
 double adjusted_velocity(double velocity, const macos_pointer_acceleration_settings_t& settings) {
