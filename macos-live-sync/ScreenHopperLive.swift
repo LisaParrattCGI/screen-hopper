@@ -1730,8 +1730,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private var configWindow: ConfigWindowController?
     private var debugWindow: DebugWindowController?
     private var debugTimer: Timer?
-    private var debugLogHeaderPrinted = false
     private var previousDebugHostCursor: RuntimeCursor?
+    private let debugLogVersion = 2
     private let debugLogDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -1863,10 +1863,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             self?.debugWindow = nil
             self?.debugTimer?.invalidate()
             self?.debugTimer = nil
-            self?.debugLogHeaderPrinted = false
         }
         debugWindow = controller
-        debugLogHeaderPrinted = false
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         startDebugTimer()
@@ -1908,102 +1906,84 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func logDebugHeaderIfNeeded() {
-        guard !debugLogHeaderPrinted else {
-            return
-        }
-
-        print([
-            "timestamp",
-            "host_x",
-            "host_y",
-            "host_delta_x",
-            "host_delta_y",
-            "host_report_screen",
-            "hopper_x",
-            "hopper_y",
-            "hopper_active_screen",
-            "last_host_x",
-            "last_host_y",
-            "last_host_screen",
-            "host_correction_x",
-            "host_correction_y",
-            "raw_dx",
-            "raw_dy",
-            "sent_dx",
-            "sent_dy",
-            "predicted_dx",
-            "predicted_dy",
-            "movement_queued",
-            "movement_sent",
-            "host_reports_accepted",
-            "host_reports_ignored",
-            "last_ignore_reason",
-            "queue_depth",
-            "last_report_screen",
-            "last_report_id",
-            "local_tracking",
-            "hopper_tracking",
-            "local_resolution",
-            "hopper_resolution",
-            "local_frame_rate",
-            "hopper_frame_rate",
-            "local_fixed_multiplier",
-            "hopper_fixed_multiplier",
-            "local_placement_tolerance",
-            "hopper_placement_tolerance",
-        ].joined(separator: "\t"))
-        debugLogHeaderPrinted = true
-    }
-
     private func logDebugSample(host: RuntimeCursor, localMouse: MouseConfig, status: RuntimeStatus, diagnostics: RuntimeDiagnostics) {
-        logDebugHeaderIfNeeded()
-
         let hostDeltaX = previousDebugHostCursor.map { host.x - $0.x } ?? 0
         let hostDeltaY = previousDebugHostCursor.map { host.y - $0.y } ?? 0
         previousDebugHostCursor = host
 
-        print([
-            debugLogDateFormatter.string(from: Date()),
-            debugCoordinateString(host.x),
-            debugCoordinateString(host.y),
-            debugCoordinateString(hostDeltaX),
-            debugCoordinateString(hostDeltaY),
-            screenLogString(host.activeScreen),
-            debugCoordinateString(status.cursor.x),
-            debugCoordinateString(status.cursor.y),
-            screenLogString(status.cursor.activeScreen),
-            debugCoordinateString(diagnostics.lastHostCursor.x),
-            debugCoordinateString(diagnostics.lastHostCursor.y),
-            screenLogString(diagnostics.lastHostCursor.activeScreen),
-            debugDeltaString(diagnostics.lastHostCorrectionX),
-            debugDeltaString(diagnostics.lastHostCorrectionY),
-            "\(diagnostics.lastRawDX)",
-            "\(diagnostics.lastRawDY)",
-            "\(diagnostics.lastSentDX)",
-            "\(diagnostics.lastSentDY)",
-            debugDeltaString(diagnostics.lastPredictedDX),
-            debugDeltaString(diagnostics.lastPredictedDY),
-            "\(diagnostics.movementReportsQueued)",
-            "\(diagnostics.movementReportsSent)",
-            "\(diagnostics.hostReportsAccepted)",
-            "\(diagnostics.hostReportsIgnored)",
-            debugIgnoreReasonString(diagnostics.lastHostIgnoreReason),
-            "\(diagnostics.outgoingQueueDepth)",
-            "\(diagnostics.lastReportTargetScreen)",
-            "\(diagnostics.lastReportID)",
-            decimalString(localMouse.trackingSpeed),
-            decimalString(status.mouse.trackingSpeed),
-            decimalString(localMouse.pointerResolution),
-            decimalString(status.mouse.pointerResolution),
-            decimalString(localMouse.frameRate),
-            decimalString(status.mouse.frameRate),
-            decimalString(localMouse.fixedMultiplier),
-            decimalString(status.mouse.fixedMultiplier),
-            decimalString(localMouse.placementTolerance),
-            decimalString(status.mouse.placementTolerance),
-        ].joined(separator: "\t"))
+        let sample: [String: Any] = [
+            "version": debugLogVersion,
+            "timestamp": debugLogDateFormatter.string(from: Date()),
+            "host": [
+                "x": debugCoordinateValue(host.x),
+                "y": debugCoordinateValue(host.y),
+                "delta_x": debugCoordinateValue(hostDeltaX),
+                "delta_y": debugCoordinateValue(hostDeltaY),
+                "reported_screen": debugScreenValue(host.activeScreen),
+            ],
+            "hopper": [
+                "x": debugCoordinateValue(status.cursor.x),
+                "y": debugCoordinateValue(status.cursor.y),
+                "active_screen": debugScreenValue(status.cursor.activeScreen),
+            ],
+            "diagnostics": [
+                "last_host_x": debugCoordinateValue(diagnostics.lastHostCursor.x),
+                "last_host_y": debugCoordinateValue(diagnostics.lastHostCursor.y),
+                "last_host_screen": debugScreenValue(diagnostics.lastHostCursor.activeScreen),
+                "host_correction_x": debugDeltaValue(diagnostics.lastHostCorrectionX),
+                "host_correction_y": debugDeltaValue(diagnostics.lastHostCorrectionY),
+                "host_reports_accepted": Int(diagnostics.hostReportsAccepted),
+                "host_reports_ignored": Int(diagnostics.hostReportsIgnored),
+                "last_ignore_reason": debugIgnoreReasonString(diagnostics.lastHostIgnoreReason),
+            ],
+            "reports": [
+                "raw_dx": Int(diagnostics.lastRawDX),
+                "raw_dy": Int(diagnostics.lastRawDY),
+                "sent_dx": Int(diagnostics.lastSentDX),
+                "sent_dy": Int(diagnostics.lastSentDY),
+                "predicted_dx": debugDeltaValue(diagnostics.lastPredictedDX),
+                "predicted_dy": debugDeltaValue(diagnostics.lastPredictedDY),
+                "last_target_screen": Int(diagnostics.lastReportTargetScreen),
+                "last_report_id": Int(diagnostics.lastReportID),
+            ],
+            "queue": [
+                "depth": Int(diagnostics.outgoingQueueDepth),
+                "movement_queued": Int(diagnostics.movementReportsQueued),
+                "movement_sent": Int(diagnostics.movementReportsSent),
+            ],
+            "mouse": [
+                "local": debugMouseConfig(localMouse),
+                "hopper": debugMouseConfig(status.mouse),
+            ],
+        ]
+
+        if let data = try? JSONSerialization.data(withJSONObject: sample, options: [.sortedKeys]),
+           let line = String(data: data, encoding: .utf8) {
+            print(line)
+        }
         fflush(stdout)
+    }
+
+    private func debugCoordinateValue(_ value: Int64) -> Double {
+        Double(value) / screenCoordinateScale
+    }
+
+    private func debugDeltaValue(_ value: Int32) -> Double {
+        Double(value) / screenCoordinateScale
+    }
+
+    private func debugScreenValue(_ screen: Int8) -> Any {
+        screen >= 0 ? Int(screen) : NSNull()
+    }
+
+    private func debugMouseConfig(_ mouse: MouseConfig) -> [String: Double] {
+        [
+            "tracking": mouse.trackingSpeed,
+            "resolution": mouse.pointerResolution,
+            "frame_rate": mouse.frameRate,
+            "fixed_multiplier": mouse.fixedMultiplier,
+            "placement_tolerance": mouse.placementTolerance,
+        ]
     }
 
     private func debugCoordinateString(_ value: Int64) -> String {
