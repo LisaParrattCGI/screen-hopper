@@ -132,6 +132,8 @@ struct cursor_placement_t {
 
 cursor_placement_t cursor_placement = {};
 
+void apply_cursor_delta(int64_t dx, int64_t dy, bool& screen_changed);
+
 int64_t consume_fractional_cursor_delta(double delta, double& fraction) {
     fraction += delta;
     int64_t whole = (int64_t) std::trunc(fraction);
@@ -259,6 +261,17 @@ inline uint32_t get_bits(const uint8_t* data, int len, uint16_t bitpos, uint8_t 
     return value;
 }
 
+int32_t sign_extend_usage_value(uint32_t value, const usage_def_t& usage_def) {
+    if (usage_def.logical_minimum < 0 && (value & (1 << (usage_def.size - 1)))) {
+        value |= 0xFFFFFFFF << usage_def.size;
+    }
+    return (int32_t) value;
+}
+
+int32_t get_usage_value(const uint8_t* data, uint8_t report_id, const usage_def_t& usage_def) {
+    return sign_extend_usage_value(get_bits(data, report_sizes[report_id], usage_def.bitpos, usage_def.size), usage_def);
+}
+
 inline void put_bit(uint8_t* data, int len, uint16_t bitpos, uint8_t value) {
     int byte_no = bitpos / 8;
     int bit_no = bitpos % 8;
@@ -371,6 +384,31 @@ void mark_last_outgoing_report_as_cursor_placement(double predicted_dx, double p
     cursor_placement.pending_reports++;
 }
 
+void adjust_cursor_prediction_for_coalesced_movement(
+    int16_t old_dx,
+    int16_t old_dy,
+    int16_t added_dx,
+    int16_t added_dy,
+    int16_t coalesced_dx,
+    int16_t coalesced_dy,
+    bool& screen_changed) {
+    macos_delta_t old_accelerated = apply_macos_acceleration(old_dx, old_dy, macos_pointer_acceleration);
+    macos_delta_t added_accelerated = apply_macos_acceleration(added_dx, added_dy, macos_pointer_acceleration);
+    macos_delta_t coalesced_accelerated = apply_macos_acceleration(coalesced_dx, coalesced_dy, macos_pointer_acceleration);
+
+    double adjustment_x = screen_coord_delta(coalesced_accelerated.dx) -
+                          screen_coord_delta(old_accelerated.dx) -
+                          screen_coord_delta(added_accelerated.dx);
+    double adjustment_y = screen_coord_delta(coalesced_accelerated.dy) -
+                          screen_coord_delta(old_accelerated.dy) -
+                          screen_coord_delta(added_accelerated.dy);
+    int64_t adjusted_dx = consume_fractional_cursor_delta(adjustment_x, cursor_fraction_x);
+    int64_t adjusted_dy = consume_fractional_cursor_delta(adjustment_y, cursor_fraction_y);
+    runtime_diagnostics.last_predicted_dx = clamp_diagnostic_delta((int32_t) runtime_diagnostics.last_predicted_dx + adjusted_dx);
+    runtime_diagnostics.last_predicted_dy = clamp_diagnostic_delta((int32_t) runtime_diagnostics.last_predicted_dy + adjusted_dy);
+    apply_cursor_delta(adjusted_dx, adjusted_dy, screen_changed);
+}
+
 usage_def_t& our_usage_for_report(uint8_t report_id, uint32_t usage) {
     return our_usages[report_id][usage];
 }
@@ -388,7 +426,7 @@ bool queue_mouse_absolute(int8_t target_screen, int32_t x, int32_t y) {
     return queue_outgoing_report(target_screen, REPORT_ID_MOUSE, temp_report, false);
 }
 
-bool queue_mouse_relative(int8_t target_screen, int16_t dx, int16_t dy, bool mergeable) {
+bool queue_mouse_relative(int8_t target_screen, int16_t dx, int16_t dy, bool mergeable, bool* screen_changed = nullptr) {
     usage_def_t& our_usage_x = our_usage_for_report(REPORT_ID_MOUSE_RELATIVE, MOUSE_X_USAGE);
     usage_def_t& our_usage_y = our_usage_for_report(REPORT_ID_MOUSE_RELATIVE, MOUSE_Y_USAGE);
 
@@ -405,7 +443,14 @@ bool queue_mouse_relative(int8_t target_screen, int16_t dx, int16_t dy, bool mer
             outgoing_reports[prev][0] == (uint8_t) target_screen &&
             outgoing_reports[prev][1] == REPORT_ID_MOUSE_RELATIVE &&
             !differ_on_absolute(outgoing_reports[prev] + 2, temp_report, REPORT_ID_MOUSE_RELATIVE)) {
+            int16_t old_dx = (int16_t) get_usage_value(outgoing_reports[prev] + 2, REPORT_ID_MOUSE_RELATIVE, our_usage_x);
+            int16_t old_dy = (int16_t) get_usage_value(outgoing_reports[prev] + 2, REPORT_ID_MOUSE_RELATIVE, our_usage_y);
             aggregate_relative(outgoing_reports[prev] + 2, temp_report, REPORT_ID_MOUSE_RELATIVE);
+            if (screen_changed != nullptr) {
+                int16_t coalesced_dx = (int16_t) get_usage_value(outgoing_reports[prev] + 2, REPORT_ID_MOUSE_RELATIVE, our_usage_x);
+                int16_t coalesced_dy = (int16_t) get_usage_value(outgoing_reports[prev] + 2, REPORT_ID_MOUSE_RELATIVE, our_usage_y);
+                adjust_cursor_prediction_for_coalesced_movement(old_dx, old_dy, dx, dy, coalesced_dx, coalesced_dy, *screen_changed);
+            }
             return true;
         }
     }
@@ -506,19 +551,9 @@ bool differ_on_absolute(const uint8_t* report1, const uint8_t* report2, uint8_t 
 void aggregate_relative(uint8_t* prev_report, const uint8_t* report, uint8_t report_id) {
     for (auto const& [usage, usage_def] : our_usages[report_id]) {
         if (usage_def.is_relative) {
-            int32_t val1 = get_bits(report, report_sizes[report_id], usage_def.bitpos, usage_def.size);
-            if (usage_def.logical_minimum < 0) {
-                if (val1 & (1 << (usage_def.size - 1))) {
-                    val1 |= 0xFFFFFFFF << usage_def.size;
-                }
-            }
+            int32_t val1 = get_usage_value(report, report_id, usage_def);
             if (val1) {
-                int32_t val2 = get_bits(prev_report, report_sizes[report_id], usage_def.bitpos, usage_def.size);
-                if (usage_def.logical_minimum < 0) {
-                    if (val2 & (1 << (usage_def.size - 1))) {
-                        val2 |= 0xFFFFFFFF << usage_def.size;
-                    }
-                }
+                int32_t val2 = get_usage_value(prev_report, report_id, usage_def);
 
                 put_bits(prev_report, report_sizes[report_id], usage_def.bitpos, usage_def.size, val1 + val2);
             }
@@ -545,6 +580,33 @@ bool within_bounds(int64_t x, int64_t y, int8_t& active_screen) {
              y >= bounds_min_y &&
              y < bounds_max_y) ||
             (constraint_mode == ConstraintMode::NO_CONSTRAINT));
+}
+
+void apply_cursor_delta(int64_t dx, int64_t dy, bool& screen_changed) {
+    int64_t new_cursor_x = cursor_x + dx;
+    int64_t new_cursor_y = cursor_y + dy;
+
+    int8_t new_active_screen;
+    if (within_bounds(new_cursor_x, new_cursor_y, new_active_screen)) {
+        cursor_x = new_cursor_x;
+        cursor_y = new_cursor_y;
+        if (new_active_screen != active_screen) {
+            screen_changed = true;
+        }
+        active_screen = new_active_screen;
+    } else if (within_bounds(cursor_x, new_cursor_y, new_active_screen)) {
+        cursor_y = new_cursor_y;
+        if (new_active_screen != active_screen) {
+            screen_changed = true;
+        }
+        active_screen = new_active_screen;
+    } else if (within_bounds(new_cursor_x, cursor_y, new_active_screen)) {
+        cursor_x = new_cursor_x;
+        if (new_active_screen != active_screen) {
+            screen_changed = true;
+        }
+        active_screen = new_active_screen;
+    }
 }
 
 void update_cursor_placement_target() {
@@ -898,31 +960,8 @@ void process_mapping(bool auto_repeat) {
     runtime_diagnostics.last_predicted_dx = clamp_diagnostic_delta(accelerated_dx);
     runtime_diagnostics.last_predicted_dy = clamp_diagnostic_delta(accelerated_dy);
 
-    int64_t new_cursor_x = cursor_x + accelerated_dx;
-    int64_t new_cursor_y = cursor_y + accelerated_dy;
-
-    int8_t new_active_screen;
     bool screen_changed = manual_screen_changed;
-    if (within_bounds(new_cursor_x, new_cursor_y, new_active_screen)) {
-        cursor_x = new_cursor_x;
-        cursor_y = new_cursor_y;
-        if (new_active_screen != active_screen) {
-            screen_changed = true;
-        }
-        active_screen = new_active_screen;
-    } else if (within_bounds(cursor_x, new_cursor_y, new_active_screen)) {  // so that the cursor doesn't snag on screen edges
-        cursor_y = new_cursor_y;
-        if (new_active_screen != active_screen) {
-            screen_changed = true;
-        }
-        active_screen = new_active_screen;
-    } else if (within_bounds(new_cursor_x, cursor_y, new_active_screen)) {
-        cursor_x = new_cursor_x;
-        if (new_active_screen != active_screen) {
-            screen_changed = true;
-        }
-        active_screen = new_active_screen;
-    }
+    apply_cursor_delta(accelerated_dx, accelerated_dy, screen_changed);
 
     bool movement_absorbed_by_placement = false;
 
@@ -954,7 +993,7 @@ void process_mapping(bool auto_repeat) {
     // Prepare relative movement report (always use REPORT_ID_MOUSE_RELATIVE for cursor movement)
     // Send raw dx/dy (not accelerated) - macOS will apply its own acceleration
     if (active_screen != -1 && !movement_absorbed_by_placement && (dx != 0 || dy != 0)) {
-        queue_mouse_relative(active_screen, dx, dy, true);
+        queue_mouse_relative(active_screen, dx, dy, true, &screen_changed);
     }
 
     // Handle buttons and scrolling via REPORT_ID_MOUSE_RELATIVE
