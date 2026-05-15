@@ -14,7 +14,7 @@ private struct FeatureReportMode {
 }
 
 private struct Options {
-    var activeScreen: Int8 = -1
+    var reportedScreenOverride: Int8 = -1
     var pointerResolution: Double = 400.0
     var frameRate: Double = 67.0
     var fixedMultiplier: Double = 1.0
@@ -1641,7 +1641,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             return
         }
 
-        let hostCursor = currentCursor(activeScreen: options.activeScreen)
+        let hostCursor = currentCursor(reportedScreenOverride: options.reportedScreenOverride)
 
         if device == nil {
             device = locator.findRuntimeDevice()
@@ -1682,7 +1682,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
                 lastConfig = config
             }
 
-            let cursor = currentCursor(activeScreen: options.activeScreen)
+            let cursor = currentCursor(reportedScreenOverride: options.reportedScreenOverride)
             try device.sendCursor(cursor)
             lastCursor = cursor
             updateMenu(connected: true, message: menuSummary(config: config, cursor: cursor))
@@ -1880,7 +1880,7 @@ private func currentDisplayOriginOffset() -> CGPoint {
     )
 }
 
-private func currentDisplayLocalCursor(activeScreen: Int8 = -1) -> RuntimeCursor {
+private func currentDisplayLocalCursor(reportedScreenOverride: Int8 = -1) -> RuntimeCursor {
     let point = CGEvent(source: nil)?.location ?? NSEvent.mouseLocation
     let rects = currentDisplayRects()
 
@@ -1888,7 +1888,7 @@ private func currentDisplayLocalCursor(activeScreen: Int8 = -1) -> RuntimeCursor
         return RuntimeCursor(
             x: Int64(((point.x - rect.minX) * screenCoordinateScale).rounded()),
             y: Int64(((point.y - rect.minY) * screenCoordinateScale).rounded()),
-            activeScreen: activeScreen
+            activeScreen: reportedScreenOverride
         )
     }
 
@@ -1896,7 +1896,7 @@ private func currentDisplayLocalCursor(activeScreen: Int8 = -1) -> RuntimeCursor
     return RuntimeCursor(
         x: Int64(((point.x - offset.x) * screenCoordinateScale).rounded()),
         y: Int64(((point.y - offset.y) * screenCoordinateScale).rounded()),
-        activeScreen: activeScreen
+        activeScreen: reportedScreenOverride
     )
 }
 
@@ -1923,8 +1923,8 @@ private func looksLikeLegacyScreenGeometry(_ screens: [ScreenConfig]) -> Bool {
     screens.contains { $0.width >= 10_000_000 || $0.height >= 10_000_000 || $0.x >= 10_000_000 || $0.y >= 10_000_000 }
 }
 
-private func currentCursor(activeScreen: Int8 = -1) -> RuntimeCursor {
-    currentDisplayLocalCursor(activeScreen: activeScreen)
+private func currentCursor(reportedScreenOverride: Int8 = -1) -> RuntimeCursor {
+    currentDisplayLocalCursor(reportedScreenOverride: reportedScreenOverride)
 }
 
 private func parseOptions() -> Options {
@@ -1942,9 +1942,9 @@ private func parseOptions() -> Options {
     while index < args.count {
         let arg = args[index]
         switch arg {
-        case "--active-screen":
+        case "--reported-screen", "--active-screen":
             if let value = takeValue(after: index), let parsed = Int8(value) {
-                options.activeScreen = parsed
+                options.reportedScreenOverride = parsed
                 index += 1
             }
         case "--pointer-resolution":

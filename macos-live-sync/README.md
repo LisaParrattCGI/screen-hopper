@@ -31,13 +31,18 @@ Or open `.build/ScreenHopperLive.app` from Finder.
 Options:
 
 ```text
---active-screen N          active screen to send with cursor updates, default -1
+--reported-screen N        diagnostic override for the reported screen, default -1
+--active-screen N          legacy alias for --reported-screen
 --pointer-resolution N     fallback pointer resolution, default 400
 --frame-rate N             acceleration frame rate, default 67
 --fixed-multiplier N       acceleration fixed multiplier, default 1
 --placement-tolerance N    cursor placement tolerance, default 0.5
 --poll-interval N          seconds between live sync ticks, default 1
 ```
+
+Normal use does not require a screen option. The firmware path identifies
+whether reports came through `screenhopper_a` or the forwarder and stamps the
+runtime cursor report with the appropriate Screen Hopper screen.
 
 The tool reads `com.apple.mouse.scaling` from the global macOS preferences and
 uses the first HID mouse `HIDPointerResolution` property it can find. If the
