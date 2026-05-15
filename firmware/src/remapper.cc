@@ -171,6 +171,16 @@ int32_t clamp_diagnostic_delta(int64_t value) {
     return (int32_t) value;
 }
 
+int8_t clamp_diagnostic_axis(int32_t value) {
+    if (value > std::numeric_limits<int8_t>::max()) {
+        return std::numeric_limits<int8_t>::max();
+    }
+    if (value < std::numeric_limits<int8_t>::min()) {
+        return std::numeric_limits<int8_t>::min();
+    }
+    return (int8_t) value;
+}
+
 uint64_t interface_usage_key(uint16_t interface, uint32_t usage) {
     return ((uint64_t) interface << 32) | usage;
 }
@@ -804,6 +814,20 @@ void apply_cursor_placement_delivery(uint8_t report_index) {
     }
 }
 
+void update_last_sent_movement_diagnostics(uint8_t report_index, uint8_t report_id) {
+    if (report_id != REPORT_ID_MOUSE_RELATIVE) {
+        runtime_diagnostics.last_sent_dx = 0;
+        runtime_diagnostics.last_sent_dy = 0;
+        return;
+    }
+
+    usage_def_t& our_usage_x = our_usage_for_report(REPORT_ID_MOUSE_RELATIVE, MOUSE_X_USAGE);
+    usage_def_t& our_usage_y = our_usage_for_report(REPORT_ID_MOUSE_RELATIVE, MOUSE_Y_USAGE);
+    const uint8_t* report = outgoing_reports[report_index] + 2;
+    runtime_diagnostics.last_sent_dx = clamp_diagnostic_axis(get_usage_value(report, report_id, our_usage_x));
+    runtime_diagnostics.last_sent_dy = clamp_diagnostic_axis(get_usage_value(report, report_id, our_usage_y));
+}
+
 void set_cursor_from_host(const runtime_cursor_t& cursor) {
     if (cursor.active_screen < 0 || cursor.active_screen >= NSCREENS || cursor.active_screen != active_screen) {
         runtime_diagnostics.last_host_cursor = cursor;
@@ -1098,6 +1122,7 @@ void send_report() {
     }
 
     apply_cursor_placement_delivery(or_head);
+    update_last_sent_movement_diagnostics(or_head, report_id);
 
     runtime_diagnostics.last_report_target_screen = target_screen;
     runtime_diagnostics.last_report_id = report_id;

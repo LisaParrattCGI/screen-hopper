@@ -101,6 +101,8 @@ private struct RuntimeDiagnostics {
     var outgoingQueueDepth: UInt8
     var lastReportTargetScreen: UInt8
     var lastReportID: UInt8
+    var lastSentDX: Int8
+    var lastSentDY: Int8
 }
 
 private final class CRC32 {
@@ -186,7 +188,9 @@ private final class ScreenHopperDevice {
             lastHostIgnoreReason: payload[49],
             outgoingQueueDepth: payload[50],
             lastReportTargetScreen: payload[51],
-            lastReportID: payload[52]
+            lastReportID: payload[52],
+            lastSentDX: payload.readInt8(at: 53),
+            lastSentDY: payload.readInt8(at: 54)
         )
     }
 
@@ -1727,6 +1731,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private var debugWindow: DebugWindowController?
     private var debugTimer: Timer?
     private var debugLogHeaderPrinted = false
+    private var previousDebugHostCursor: RuntimeCursor?
     private let debugLogDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -1912,6 +1917,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             "timestamp",
             "host_x",
             "host_y",
+            "host_delta_x",
+            "host_delta_y",
             "host_report_screen",
             "hopper_x",
             "hopper_y",
@@ -1923,6 +1930,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             "host_correction_y",
             "raw_dx",
             "raw_dy",
+            "sent_dx",
+            "sent_dy",
             "predicted_dx",
             "predicted_dy",
             "movement_queued",
@@ -1950,10 +1959,16 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private func logDebugSample(host: RuntimeCursor, localMouse: MouseConfig, status: RuntimeStatus, diagnostics: RuntimeDiagnostics) {
         logDebugHeaderIfNeeded()
 
+        let hostDeltaX = previousDebugHostCursor.map { host.x - $0.x } ?? 0
+        let hostDeltaY = previousDebugHostCursor.map { host.y - $0.y } ?? 0
+        previousDebugHostCursor = host
+
         print([
             debugLogDateFormatter.string(from: Date()),
             debugCoordinateString(host.x),
             debugCoordinateString(host.y),
+            debugCoordinateString(hostDeltaX),
+            debugCoordinateString(hostDeltaY),
             screenLogString(host.activeScreen),
             debugCoordinateString(status.cursor.x),
             debugCoordinateString(status.cursor.y),
@@ -1965,6 +1980,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             debugDeltaString(diagnostics.lastHostCorrectionY),
             "\(diagnostics.lastRawDX)",
             "\(diagnostics.lastRawDY)",
+            "\(diagnostics.lastSentDX)",
+            "\(diagnostics.lastSentDY)",
             debugDeltaString(diagnostics.lastPredictedDX),
             debugDeltaString(diagnostics.lastPredictedDY),
             "\(diagnostics.movementReportsQueued)",
@@ -2386,6 +2403,10 @@ private extension Data {
 
     func readInt16LE(at offset: Int) -> Int16 {
         Int16(bitPattern: readUInt16LE(at: offset))
+    }
+
+    func readInt8(at offset: Int) -> Int8 {
+        Int8(bitPattern: self[offset])
     }
 
     func readInt64LE(at offset: Int) -> Int64 {

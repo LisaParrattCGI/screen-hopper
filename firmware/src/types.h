@@ -221,6 +221,8 @@ struct __attribute__((packed)) runtime_diagnostics_t {
     uint8_t outgoing_queue_depth;
     uint8_t last_report_target_screen;
     uint8_t last_report_id;
+    int8_t last_sent_dx;
+    int8_t last_sent_dy;
 };
 
 #endif
