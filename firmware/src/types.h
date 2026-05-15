@@ -8,7 +8,7 @@
 
 #define CONFIG_VERSION 7
 #define CONFIG_SIZE 60
-#define RUNTIME_SIZE 60
+#define RUNTIME_SIZE 160
 
 #define REPORT_ID_MOUSE_ABSOLUTE 1
 #define REPORT_ID_KEYBOARD_FIXED 2
@@ -221,8 +221,22 @@ struct __attribute__((packed)) runtime_diagnostics_t {
     uint8_t outgoing_queue_depth;
     uint8_t last_report_target_screen;
     uint8_t last_report_id;
-    int8_t last_sent_dx;
-    int8_t last_sent_dy;
+    int16_t last_sent_dx;
+    int16_t last_sent_dy;
+    uint8_t last_prediction_applied;
+    uint8_t last_cursor_placement_report;
+    uint32_t prediction_reports_applied;
+    uint32_t placement_reports_delivered;
+    uint32_t transmit_failures;
+    uint32_t screen_changes_predicted;
+    int64_t total_raw_dx;
+    int64_t total_raw_dy;
+    int64_t total_sent_dx;
+    int64_t total_sent_dy;
+    int64_t total_predicted_dx;
+    int64_t total_predicted_dy;
+    int64_t total_host_correction_x;
+    int64_t total_host_correction_y;
 };
 
 #endif

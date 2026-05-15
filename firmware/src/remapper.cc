@@ -171,14 +171,14 @@ int32_t clamp_diagnostic_delta(int64_t value) {
     return (int32_t) value;
 }
 
-int8_t clamp_diagnostic_axis(int32_t value) {
-    if (value > std::numeric_limits<int8_t>::max()) {
-        return std::numeric_limits<int8_t>::max();
+int16_t clamp_diagnostic_axis(int32_t value) {
+    if (value > std::numeric_limits<int16_t>::max()) {
+        return std::numeric_limits<int16_t>::max();
     }
-    if (value < std::numeric_limits<int8_t>::min()) {
-        return std::numeric_limits<int8_t>::min();
+    if (value < std::numeric_limits<int16_t>::min()) {
+        return std::numeric_limits<int16_t>::min();
     }
-    return (int8_t) value;
+    return (int16_t) value;
 }
 
 uint64_t interface_usage_key(uint16_t interface, uint32_t usage) {
@@ -765,6 +765,7 @@ void apply_cursor_placement_delivery(uint8_t report_index) {
     }
 
     outgoing_reports_cursor_placement[report_index] = false;
+    runtime_diagnostics.placement_reports_delivered++;
     if (outgoing_reports_cursor_placement_generation[report_index] != cursor_placement.generation) {
         return;
     }
@@ -786,6 +787,8 @@ void update_last_sent_movement_diagnostics(uint8_t report_index, uint8_t report_
     if (report_id != REPORT_ID_MOUSE_RELATIVE) {
         runtime_diagnostics.last_sent_dx = 0;
         runtime_diagnostics.last_sent_dy = 0;
+        runtime_diagnostics.last_prediction_applied = 0;
+        runtime_diagnostics.last_cursor_placement_report = 0;
         runtime_diagnostics.last_predicted_dx = 0;
         runtime_diagnostics.last_predicted_dy = 0;
         return;
@@ -807,6 +810,7 @@ void get_sent_relative_axes(uint8_t report_index, int16_t& dx, int16_t& dy) {
 }
 
 void apply_sent_movement_prediction(int16_t dx, int16_t dy) {
+    runtime_diagnostics.last_prediction_applied = 0;
     if (dx == 0 && dy == 0) {
         runtime_diagnostics.last_predicted_dx = 0;
         runtime_diagnostics.last_predicted_dy = 0;
@@ -818,10 +822,15 @@ void apply_sent_movement_prediction(int16_t dx, int16_t dy) {
     int64_t accelerated_dy = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dy), cursor_fraction_y);
     runtime_diagnostics.last_predicted_dx = clamp_diagnostic_delta(accelerated_dx);
     runtime_diagnostics.last_predicted_dy = clamp_diagnostic_delta(accelerated_dy);
+    runtime_diagnostics.total_predicted_dx += accelerated_dx;
+    runtime_diagnostics.total_predicted_dy += accelerated_dy;
+    runtime_diagnostics.prediction_reports_applied++;
+    runtime_diagnostics.last_prediction_applied = 1;
 
     bool screen_changed = false;
     apply_cursor_delta(accelerated_dx, accelerated_dy, screen_changed);
     if (screen_changed && active_screen != -1) {
+        runtime_diagnostics.screen_changes_predicted++;
         cursor_fraction_x = 0.0;
         cursor_fraction_y = 0.0;
         start_cursor_placement(active_screen);
@@ -850,6 +859,8 @@ void set_cursor_from_host(const runtime_cursor_t& cursor) {
 
     runtime_diagnostics.host_reports_accepted++;
     runtime_diagnostics.last_host_ignore_reason = 0;
+    runtime_diagnostics.total_host_correction_x += runtime_diagnostics.last_host_correction_x;
+    runtime_diagnostics.total_host_correction_y += runtime_diagnostics.last_host_correction_y;
     cursor_x = host_x;
     cursor_y = host_y;
     cursor_fraction_x = 0.0;
@@ -977,6 +988,8 @@ void process_mapping(bool auto_repeat) {
     }
     runtime_diagnostics.last_raw_dx = dx;
     runtime_diagnostics.last_raw_dy = dy;
+    runtime_diagnostics.total_raw_dx += dx;
+    runtime_diagnostics.total_raw_dy += dy;
 
     bool screen_changed = manual_screen_changed;
     bool movement_absorbed_by_placement = false;
@@ -1109,9 +1122,11 @@ void send_report() {
         serial_write(outgoing_reports[or_head] + 1, report_sizes[report_id] + 1, FORWARDER_UART);
     }
     if (!transmitted) {
+        runtime_diagnostics.transmit_failures++;
         return;
     }
 
+    runtime_diagnostics.last_cursor_placement_report = cursor_placement_report ? 1 : 0;
     apply_cursor_placement_delivery(or_head);
     int16_t sent_dx = 0;
     int16_t sent_dy = 0;
@@ -1124,6 +1139,8 @@ void send_report() {
     runtime_diagnostics.last_report_id = report_id;
     if (report_id == REPORT_ID_MOUSE_RELATIVE) {
         runtime_diagnostics.movement_reports_sent++;
+        runtime_diagnostics.total_sent_dx += sent_dx;
+        runtime_diagnostics.total_sent_dy += sent_dy;
     }
 
     or_head = (or_head + 1) % OR_BUFSIZE;
@@ -1134,6 +1151,7 @@ void send_report() {
 
     if (report_id == REPORT_ID_MOUSE_RELATIVE) {
         if (cursor_placement_report) {
+            runtime_diagnostics.last_prediction_applied = 0;
             runtime_diagnostics.last_predicted_dx = 0;
             runtime_diagnostics.last_predicted_dy = 0;
         } else {

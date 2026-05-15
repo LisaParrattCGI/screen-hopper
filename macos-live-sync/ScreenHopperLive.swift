@@ -101,8 +101,22 @@ private struct RuntimeDiagnostics {
     var outgoingQueueDepth: UInt8
     var lastReportTargetScreen: UInt8
     var lastReportID: UInt8
-    var lastSentDX: Int8
-    var lastSentDY: Int8
+    var lastSentDX: Int16
+    var lastSentDY: Int16
+    var lastPredictionApplied: Bool
+    var lastCursorPlacementReport: Bool
+    var predictionReportsApplied: UInt32
+    var placementReportsDelivered: UInt32
+    var transmitFailures: UInt32
+    var screenChangesPredicted: UInt32
+    var totalRawDX: Int64
+    var totalRawDY: Int64
+    var totalSentDX: Int64
+    var totalSentDY: Int64
+    var totalPredictedDX: Int64
+    var totalPredictedDY: Int64
+    var totalHostCorrectionX: Int64
+    var totalHostCorrectionY: Int64
 }
 
 private final class CRC32 {
@@ -189,8 +203,22 @@ private final class ScreenHopperDevice {
             outgoingQueueDepth: payload[50],
             lastReportTargetScreen: payload[51],
             lastReportID: payload[52],
-            lastSentDX: payload.readInt8(at: 53),
-            lastSentDY: payload.readInt8(at: 54)
+            lastSentDX: payload.readInt16LE(at: 53),
+            lastSentDY: payload.readInt16LE(at: 55),
+            lastPredictionApplied: payload[57] != 0,
+            lastCursorPlacementReport: payload[58] != 0,
+            predictionReportsApplied: payload.readUInt32LE(at: 59),
+            placementReportsDelivered: payload.readUInt32LE(at: 63),
+            transmitFailures: payload.readUInt32LE(at: 67),
+            screenChangesPredicted: payload.readUInt32LE(at: 71),
+            totalRawDX: payload.readInt64LE(at: 75),
+            totalRawDY: payload.readInt64LE(at: 83),
+            totalSentDX: payload.readInt64LE(at: 91),
+            totalSentDY: payload.readInt64LE(at: 99),
+            totalPredictedDX: payload.readInt64LE(at: 107),
+            totalPredictedDY: payload.readInt64LE(at: 115),
+            totalHostCorrectionX: payload.readInt64LE(at: 123),
+            totalHostCorrectionY: payload.readInt64LE(at: 131)
         )
     }
 
@@ -1731,7 +1759,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private var debugWindow: DebugWindowController?
     private var debugTimer: Timer?
     private var previousDebugHostCursor: RuntimeCursor?
-    private let debugLogVersion = 2
+    private var previousDebugDiagnostics: RuntimeDiagnostics?
+    private let debugLogVersion = 3
     private let debugLogDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -1863,8 +1892,12 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             self?.debugWindow = nil
             self?.debugTimer?.invalidate()
             self?.debugTimer = nil
+            self?.previousDebugHostCursor = nil
+            self?.previousDebugDiagnostics = nil
         }
         debugWindow = controller
+        previousDebugHostCursor = nil
+        previousDebugDiagnostics = nil
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         startDebugTimer()
@@ -1910,6 +1943,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         let hostDeltaX = previousDebugHostCursor.map { host.x - $0.x } ?? 0
         let hostDeltaY = previousDebugHostCursor.map { host.y - $0.y } ?? 0
         previousDebugHostCursor = host
+        let interval = debugInterval(previousDebugDiagnostics, diagnostics)
+        previousDebugDiagnostics = diagnostics
 
         let sample: [String: Any] = [
             "version": debugLogVersion,
@@ -1945,12 +1980,29 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
                 "predicted_dy": debugDeltaValue(diagnostics.lastPredictedDY),
                 "last_target_screen": Int(diagnostics.lastReportTargetScreen),
                 "last_report_id": Int(diagnostics.lastReportID),
+                "last_prediction_applied": diagnostics.lastPredictionApplied,
+                "last_cursor_placement_report": diagnostics.lastCursorPlacementReport,
             ],
             "queue": [
                 "depth": Int(diagnostics.outgoingQueueDepth),
                 "movement_queued": Int(diagnostics.movementReportsQueued),
                 "movement_sent": Int(diagnostics.movementReportsSent),
             ],
+            "totals": [
+                "raw_dx": diagnostics.totalRawDX,
+                "raw_dy": diagnostics.totalRawDY,
+                "sent_dx": diagnostics.totalSentDX,
+                "sent_dy": diagnostics.totalSentDY,
+                "predicted_dx": debugCoordinateValue(diagnostics.totalPredictedDX),
+                "predicted_dy": debugCoordinateValue(diagnostics.totalPredictedDY),
+                "host_correction_x": debugCoordinateValue(diagnostics.totalHostCorrectionX),
+                "host_correction_y": debugCoordinateValue(diagnostics.totalHostCorrectionY),
+                "prediction_reports_applied": Int(diagnostics.predictionReportsApplied),
+                "placement_reports_delivered": Int(diagnostics.placementReportsDelivered),
+                "transmit_failures": Int(diagnostics.transmitFailures),
+                "screen_changes_predicted": Int(diagnostics.screenChangesPredicted),
+            ],
+            "interval": interval,
             "mouse": [
                 "local": debugMouseConfig(localMouse),
                 "hopper": debugMouseConfig(status.mouse),
@@ -1962,6 +2014,56 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             print(line)
         }
         fflush(stdout)
+    }
+
+    private func debugInterval(_ previous: RuntimeDiagnostics?, _ current: RuntimeDiagnostics) -> [String: Any] {
+        guard let previous else {
+            return [
+                "raw_dx": 0,
+                "raw_dy": 0,
+                "sent_dx": 0,
+                "sent_dy": 0,
+                "predicted_dx": 0.0,
+                "predicted_dy": 0.0,
+                "host_correction_x": 0.0,
+                "host_correction_y": 0.0,
+                "movement_queued": 0,
+                "movement_sent": 0,
+                "prediction_reports_applied": 0,
+                "placement_reports_delivered": 0,
+                "host_reports_accepted": 0,
+                "host_reports_ignored": 0,
+                "transmit_failures": 0,
+                "screen_changes_predicted": 0,
+            ]
+        }
+
+        return [
+            "raw_dx": current.totalRawDX - previous.totalRawDX,
+            "raw_dy": current.totalRawDY - previous.totalRawDY,
+            "sent_dx": current.totalSentDX - previous.totalSentDX,
+            "sent_dy": current.totalSentDY - previous.totalSentDY,
+            "predicted_dx": debugCoordinateValue(current.totalPredictedDX - previous.totalPredictedDX),
+            "predicted_dy": debugCoordinateValue(current.totalPredictedDY - previous.totalPredictedDY),
+            "host_correction_x": debugCoordinateValue(current.totalHostCorrectionX - previous.totalHostCorrectionX),
+            "host_correction_y": debugCoordinateValue(current.totalHostCorrectionY - previous.totalHostCorrectionY),
+            "movement_queued": debugDelta(current.movementReportsQueued, previous.movementReportsQueued),
+            "movement_sent": debugDelta(current.movementReportsSent, previous.movementReportsSent),
+            "prediction_reports_applied": debugDelta(current.predictionReportsApplied, previous.predictionReportsApplied),
+            "placement_reports_delivered": debugDelta(current.placementReportsDelivered, previous.placementReportsDelivered),
+            "host_reports_accepted": debugDelta(current.hostReportsAccepted, previous.hostReportsAccepted),
+            "host_reports_ignored": debugDelta(current.hostReportsIgnored, previous.hostReportsIgnored),
+            "transmit_failures": debugDelta(current.transmitFailures, previous.transmitFailures),
+            "screen_changes_predicted": debugDelta(current.screenChangesPredicted, previous.screenChangesPredicted),
+        ]
+    }
+
+    private func debugDelta(_ current: UInt32, _ previous: UInt32) -> Int {
+        Int(current &- previous)
+    }
+
+    private func debugDelta(_ current: UInt16, _ previous: UInt16) -> Int {
+        Int(current &- previous)
     }
 
     private func debugCoordinateValue(_ value: Int64) -> Double {

@@ -129,7 +129,23 @@
       ["last_host_ignore_reason", "uint8"],
       ["outgoing_queue_depth", "uint8"],
       ["last_report_target_screen", "uint8"],
-      ["last_report_id", "uint8"]
+      ["last_report_id", "uint8"],
+      ["last_sent_dx", "int16_le"],
+      ["last_sent_dy", "int16_le"],
+      ["last_prediction_applied", "uint8 boolean"],
+      ["last_cursor_placement_report", "uint8 boolean"],
+      ["prediction_reports_applied", "uint32_le"],
+      ["placement_reports_delivered", "uint32_le"],
+      ["transmit_failures", "uint32_le"],
+      ["screen_changes_predicted", "uint32_le"],
+      ["total_raw_dx", "int64_le HID counts"],
+      ["total_raw_dy", "int64_le HID counts"],
+      ["total_sent_dx", "int64_le HID counts"],
+      ["total_sent_dy", "int64_le HID counts"],
+      ["total_predicted_dx", "int64_le screen coordinate delta"],
+      ["total_predicted_dy", "int64_le screen coordinate delta"],
+      ["total_host_correction_x", "int64_le screen coordinate delta"],
+      ["total_host_correction_y", "int64_le screen coordinate delta"]
     ]
   }
 }
