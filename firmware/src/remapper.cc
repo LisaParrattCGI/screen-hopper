@@ -27,6 +27,7 @@
 
 #define FORWARDER_UART uart1
 #define FORWARDER_TX_PIN 20
+#define FORWARDER_RX_PIN 21
 
 const uint8_t V_RESOLUTION_BITMASK = (1 << 0);
 const uint8_t H_RESOLUTION_BITMASK = (1 << 2);
@@ -276,6 +277,35 @@ void send_forwarder_active_status(bool active) {
         .value = active ? (uint8_t) 1 : (uint8_t) 0,
     };
     serial_write((const uint8_t*) &msg, sizeof(msg), FORWARDER_UART);
+}
+
+void forwarder_serial_callback(const uint8_t* data, uint16_t len) {
+    if (len < 2 || data[0] != FORWARDER_CONTROL_REPORT_ID) {
+        return;
+    }
+
+    switch (data[1]) {
+        case FORWARDER_CONTROL_SET_HOST_CURSOR: {
+            if (len == sizeof(forwarder_cursor_report_t)) {
+                const forwarder_cursor_report_t* msg = (const forwarder_cursor_report_t*) data;
+                runtime_cursor_t cursor;
+                memcpy(&cursor, &msg->cursor, sizeof(cursor));
+                set_cursor_from_host(cursor);
+            }
+            break;
+        }
+        case FORWARDER_CONTROL_SET_MOUSE_CONFIG: {
+            if (len == sizeof(forwarder_mouse_config_report_t)) {
+                const forwarder_mouse_config_report_t* msg = (const forwarder_mouse_config_report_t*) data;
+                macos_mouse_config_t mouse_config;
+                memcpy(&mouse_config, &msg->mouse_config, sizeof(mouse_config));
+                apply_mouse_config(&mouse_config);
+            }
+            break;
+        }
+        default:
+            break;
+    }
 }
 
 void update_active_screen_leds() {
@@ -1057,6 +1087,7 @@ void forwarder_serial_init() {
     uart_init(FORWARDER_UART, FORWARDER_BAUDRATE);
     uart_set_translate_crlf(FORWARDER_UART, false);
     gpio_set_function(FORWARDER_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(FORWARDER_RX_PIN, GPIO_FUNC_UART);
 }
 
 int main() {
@@ -1078,6 +1109,7 @@ int main() {
         if (read_report()) {
             process_mapping(get_and_clear_tick_pending());
         }
+        serial_read(forwarder_serial_callback, FORWARDER_UART);
         tud_task();
         if (tud_hid_ready()) {
             if (get_and_clear_tick_pending()) {
