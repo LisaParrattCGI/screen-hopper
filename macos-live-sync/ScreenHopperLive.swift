@@ -85,6 +85,24 @@ private struct RuntimeStatus {
     var mouse: MouseConfig
 }
 
+private struct RuntimeDiagnostics {
+    var lastHostCursor: RuntimeCursor
+    var lastHostCorrectionX: Int32
+    var lastHostCorrectionY: Int32
+    var lastRawDX: Int16
+    var lastRawDY: Int16
+    var lastPredictedDX: Int32
+    var lastPredictedDY: Int32
+    var movementReportsQueued: UInt32
+    var movementReportsSent: UInt32
+    var hostReportsAccepted: UInt16
+    var hostReportsIgnored: UInt16
+    var lastHostIgnoreReason: UInt8
+    var outgoingQueueDepth: UInt8
+    var lastReportTargetScreen: UInt8
+    var lastReportID: UInt8
+}
+
 private final class CRC32 {
     private static let table: [UInt32] = (0..<256).map { value in
         var crc = UInt32(value)
@@ -143,6 +161,32 @@ private final class ScreenHopperDevice {
                 fixedMultiplier: doubleFromFixed16(payload.readUInt32LE(at: 31)),
                 placementTolerance: doubleFromFixed16(payload.readUInt32LE(at: 35))
             )
+        )
+    }
+
+    func fetchDiagnostics() throws -> RuntimeDiagnostics {
+        try sendRuntimeCommand(.getDiagnostics)
+        let payload = try readStatusPayload()
+        return RuntimeDiagnostics(
+            lastHostCursor: RuntimeCursor(
+                x: payload.readInt64LE(at: 0),
+                y: payload.readInt64LE(at: 8),
+                activeScreen: Int8(bitPattern: payload[16])
+            ),
+            lastHostCorrectionX: payload.readInt32LE(at: 17),
+            lastHostCorrectionY: payload.readInt32LE(at: 21),
+            lastRawDX: payload.readInt16LE(at: 25),
+            lastRawDY: payload.readInt16LE(at: 27),
+            lastPredictedDX: payload.readInt32LE(at: 29),
+            lastPredictedDY: payload.readInt32LE(at: 33),
+            movementReportsQueued: payload.readUInt32LE(at: 37),
+            movementReportsSent: payload.readUInt32LE(at: 41),
+            hostReportsAccepted: payload.readUInt16LE(at: 45),
+            hostReportsIgnored: payload.readUInt16LE(at: 47),
+            lastHostIgnoreReason: payload[49],
+            outgoingQueueDepth: payload[50],
+            lastReportTargetScreen: payload[51],
+            lastReportID: payload[52]
         )
     }
 
@@ -1352,11 +1396,19 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
     private let deviceFixedMultiplierLabel = NSTextField(labelWithString: "-")
     private let localPlacementToleranceLabel = NSTextField(labelWithString: "-")
     private let devicePlacementToleranceLabel = NSTextField(labelWithString: "-")
+    private let hostCorrectionLabel = NSTextField(labelWithString: "-")
+    private let lastHostCursorLabel = NSTextField(labelWithString: "-")
+    private let rawMovementLabel = NSTextField(labelWithString: "-")
+    private let predictedMovementLabel = NSTextField(labelWithString: "-")
+    private let movementReportCountLabel = NSTextField(labelWithString: "-")
+    private let hostReportCountLabel = NSTextField(labelWithString: "-")
+    private let queueLabel = NSTextField(labelWithString: "-")
+    private let lastReportLabel = NSTextField(labelWithString: "-")
     private let statusLabel = NSTextField(labelWithString: "Waiting for data...")
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 470),
+            contentRect: NSRect(x: 0, y: 0, width: 680, height: 650),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -1373,11 +1425,12 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         fatalError("init(coder:) has not been implemented")
     }
 
-    func update(host: RuntimeCursor, localMouse: MouseConfig, device: RuntimeStatus?, error: String?) {
+    func update(host: RuntimeCursor, localMouse: MouseConfig, device: RuntimeStatus?, diagnostics: RuntimeDiagnostics?, error: String?) {
         hostXLabel.stringValue = coordinateString(host.x)
         hostYLabel.stringValue = coordinateString(host.y)
         hostScreenLabel.stringValue = screenString(host.activeScreen)
         updateMouseLabels(local: localMouse, device: device?.mouse)
+        updateDiagnosticLabels(diagnostics)
 
         if let device {
             deviceXLabel.stringValue = coordinateString(device.cursor.x)
@@ -1424,6 +1477,16 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
             ("Placement", placementLabel),
         ]))
         root.addArrangedSubview(mouseModelSection())
+        root.addArrangedSubview(debugSection(title: "Prediction Diagnostics", rows: [
+            ("Last host cursor", lastHostCursorLabel),
+            ("Host correction", hostCorrectionLabel),
+            ("Last raw movement", rawMovementLabel),
+            ("Last predicted movement", predictedMovementLabel),
+            ("Movement reports", movementReportCountLabel),
+            ("Host reports", hostReportCountLabel),
+            ("Queue depth", queueLabel),
+            ("Last sent report", lastReportLabel),
+        ]))
 
         statusLabel.font = NSFont.systemFont(ofSize: 12)
         statusLabel.textColor = .secondaryLabelColor
@@ -1577,7 +1640,38 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         devicePlacementToleranceLabel.stringValue = mouseValueString(device.placementTolerance)
     }
 
+    private func updateDiagnosticLabels(_ diagnostics: RuntimeDiagnostics?) {
+        guard let diagnostics else {
+            for label in [
+                lastHostCursorLabel,
+                hostCorrectionLabel,
+                rawMovementLabel,
+                predictedMovementLabel,
+                movementReportCountLabel,
+                hostReportCountLabel,
+                queueLabel,
+                lastReportLabel,
+            ] {
+                label.stringValue = "-"
+            }
+            return
+        }
+
+        lastHostCursorLabel.stringValue = "\(coordinateString(diagnostics.lastHostCursor.x)), \(coordinateString(diagnostics.lastHostCursor.y)) / \(screenString(diagnostics.lastHostCursor.activeScreen))"
+        hostCorrectionLabel.stringValue = "\(diagnosticCoordString(diagnostics.lastHostCorrectionX)), \(diagnosticCoordString(diagnostics.lastHostCorrectionY))"
+        rawMovementLabel.stringValue = "\(diagnostics.lastRawDX), \(diagnostics.lastRawDY)"
+        predictedMovementLabel.stringValue = "\(diagnosticCoordString(diagnostics.lastPredictedDX)), \(diagnosticCoordString(diagnostics.lastPredictedDY))"
+        movementReportCountLabel.stringValue = "\(diagnostics.movementReportsQueued) queued / \(diagnostics.movementReportsSent) sent"
+        hostReportCountLabel.stringValue = "\(diagnostics.hostReportsAccepted) accepted / \(diagnostics.hostReportsIgnored) ignored (\(ignoreReasonString(diagnostics.lastHostIgnoreReason)))"
+        queueLabel.stringValue = "\(diagnostics.outgoingQueueDepth)"
+        lastReportLabel.stringValue = "screen \(diagnostics.lastReportTargetScreen), report \(diagnostics.lastReportID)"
+    }
+
     private func coordinateString(_ value: Int64) -> String {
+        decimalString(Double(value) / screenCoordinateScale)
+    }
+
+    private func diagnosticCoordString(_ value: Int32) -> String {
         decimalString(Double(value) / screenCoordinateScale)
     }
 
@@ -1597,6 +1691,21 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
             return "anchor pending"
         }
         return "idle"
+    }
+
+    private func ignoreReasonString(_ reason: UInt8) -> String {
+        switch reason {
+        case 0:
+            return "accepted"
+        case 1:
+            return "unknown screen"
+        case 2:
+            return "screen out of range"
+        case 3:
+            return "inactive screen"
+        default:
+            return "reason \(reason)"
+        }
     }
 }
 
@@ -1769,16 +1878,17 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         }
 
         guard let device else {
-            debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, error: locator.disconnectedMessage)
+            debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, diagnostics: nil, error: locator.disconnectedMessage)
             return
         }
 
         do {
             let status = try device.fetchStatus()
-            debugWindow.update(host: hostCursor, localMouse: localMouse, device: status, error: nil)
+            let diagnostics = try device.fetchDiagnostics()
+            debugWindow.update(host: hostCursor, localMouse: localMouse, device: status, diagnostics: diagnostics, error: nil)
         } catch {
             self.device = nil
-            debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, error: "Screen Hopper: \(briefError(error))")
+            debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, diagnostics: nil, error: "Screen Hopper: \(briefError(error))")
         }
     }
 
@@ -2136,8 +2246,20 @@ private extension Data {
         return value
     }
 
+    func readUInt16LE(at offset: Int) -> UInt16 {
+        var value: UInt16 = 0
+        for i in 0..<2 {
+            value |= UInt16(self[offset + i]) << UInt16(i * 8)
+        }
+        return value
+    }
+
     func readInt32LE(at offset: Int) -> Int32 {
         Int32(bitPattern: readUInt32LE(at: offset))
+    }
+
+    func readInt16LE(at offset: Int) -> Int16 {
+        Int16(bitPattern: readUInt16LE(at: offset))
     }
 
     func readInt64LE(at offset: Int) -> Int64 {

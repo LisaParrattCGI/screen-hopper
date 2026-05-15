@@ -54,7 +54,8 @@
     "get_status": 1,
     "set_host_cursor": 2,
     "set_mouse_config": 3,
-    "get_mouse_config": 4
+    "get_mouse_config": 4,
+    "get_diagnostics": 5
   },
   "payloads": {
     "set_feature_header": [
@@ -112,6 +113,23 @@
       ["placement_active", "uint8"],
       ["placement_anchor_pending", "uint8"],
       ["mouse_config", "5 * fixed16 uint32_le"]
+    ],
+    "runtime_diagnostics": [
+      ["last_host_cursor", "runtime_cursor"],
+      ["last_host_correction_x", "int32_le screen coordinate delta"],
+      ["last_host_correction_y", "int32_le screen coordinate delta"],
+      ["last_raw_dx", "int16_le"],
+      ["last_raw_dy", "int16_le"],
+      ["last_predicted_dx", "int32_le screen coordinate delta"],
+      ["last_predicted_dy", "int32_le screen coordinate delta"],
+      ["movement_reports_queued", "uint32_le"],
+      ["movement_reports_sent", "uint32_le"],
+      ["host_reports_accepted", "uint16_le"],
+      ["host_reports_ignored", "uint16_le"],
+      ["last_host_ignore_reason", "uint8"],
+      ["outgoing_queue_depth", "uint8"],
+      ["last_report_target_screen", "uint8"],
+      ["last_report_id", "uint8"]
     ]
   }
 }

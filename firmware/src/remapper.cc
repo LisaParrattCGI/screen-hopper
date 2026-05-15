@@ -96,6 +96,7 @@ uint32_t reports_sent;
 uint64_t next_periodic_cursor_placement = 0;
 uint32_t scheduled_cursor_placement_interval_seconds = 0;
 int8_t displayed_active_screen = -2;
+runtime_diagnostics_t runtime_diagnostics = {};
 
 int64_t cursor_x = 0;
 int64_t cursor_y = 0;
@@ -144,6 +145,16 @@ int16_t clamp_relative_axis(int64_t value) {
         return std::numeric_limits<int16_t>::min();
     }
     return (int16_t) value;
+}
+
+int32_t clamp_diagnostic_delta(int64_t value) {
+    if (value > std::numeric_limits<int32_t>::max()) {
+        return std::numeric_limits<int32_t>::max();
+    }
+    if (value < std::numeric_limits<int32_t>::min()) {
+        return std::numeric_limits<int32_t>::min();
+    }
+    return (int32_t) value;
 }
 
 uint64_t interface_usage_key(uint16_t interface, uint32_t usage) {
@@ -330,6 +341,10 @@ bool queue_outgoing_report(int8_t target_screen, uint8_t report_id, const uint8_
     memcpy(outgoing_reports[or_tail] + 2, report, report_sizes[report_id]);
     or_tail = (or_tail + 1) % OR_BUFSIZE;
     or_items++;
+    runtime_diagnostics.outgoing_queue_depth = or_items;
+    if (report_id == REPORT_ID_MOUSE_RELATIVE) {
+        runtime_diagnostics.movement_reports_queued++;
+    }
     return true;
 }
 
@@ -636,6 +651,11 @@ runtime_cursor_t get_runtime_cursor() {
     };
 }
 
+runtime_diagnostics_t get_runtime_diagnostics() {
+    runtime_diagnostics.outgoing_queue_depth = or_items;
+    return runtime_diagnostics;
+}
+
 void get_runtime_placement_flags(uint8_t& placement_active, uint8_t& placement_anchor_pending) {
     placement_active = cursor_placement.active ? 1 : 0;
     placement_anchor_pending = cursor_placement.anchor_pending ? 1 : 0;
@@ -643,12 +663,22 @@ void get_runtime_placement_flags(uint8_t& placement_active, uint8_t& placement_a
 
 void set_cursor_from_host(const runtime_cursor_t& cursor) {
     if (cursor.active_screen < 0 || cursor.active_screen >= NSCREENS || cursor.active_screen != active_screen) {
+        runtime_diagnostics.last_host_cursor = cursor;
+        runtime_diagnostics.host_reports_ignored++;
+        runtime_diagnostics.last_host_ignore_reason = cursor.active_screen < 0 ? 1 : cursor.active_screen >= NSCREENS ? 2 : 3;
         return;
     }
 
     const screen_def_t& screen = screens[active_screen];
-    cursor_x = (int64_t) screen.x + cursor.x;
-    cursor_y = (int64_t) screen.y + cursor.y;
+    int64_t host_x = (int64_t) screen.x + cursor.x;
+    int64_t host_y = (int64_t) screen.y + cursor.y;
+    runtime_diagnostics.last_host_cursor = cursor;
+    runtime_diagnostics.last_host_correction_x = clamp_diagnostic_delta(host_x - cursor_x);
+    runtime_diagnostics.last_host_correction_y = clamp_diagnostic_delta(host_y - cursor_y);
+    runtime_diagnostics.host_reports_accepted++;
+    runtime_diagnostics.last_host_ignore_reason = 0;
+    cursor_x = host_x;
+    cursor_y = host_y;
     cursor_fraction_x = 0.0;
     cursor_fraction_y = 0.0;
     cursor_placement.active = false;
@@ -766,12 +796,16 @@ void process_mapping(bool auto_repeat) {
 
     int16_t dx = consume_relative_axis_movement(MOUSE_X_USAGE);
     int16_t dy = consume_relative_axis_movement(MOUSE_Y_USAGE);
+    runtime_diagnostics.last_raw_dx = dx;
+    runtime_diagnostics.last_raw_dy = dy;
 
     // Track the same relative report that will be sent to the host.
     // Apple accelerates the vector magnitude once, then applies that scalar to both axes.
     macos_delta_t accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
     int64_t accelerated_dx = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dx), cursor_fraction_x);
     int64_t accelerated_dy = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dy), cursor_fraction_y);
+    runtime_diagnostics.last_predicted_dx = clamp_diagnostic_delta(accelerated_dx);
+    runtime_diagnostics.last_predicted_dy = clamp_diagnostic_delta(accelerated_dy);
 
     int64_t new_cursor_x = cursor_x + accelerated_dx;
     int64_t new_cursor_y = cursor_y + accelerated_dy;
@@ -925,9 +959,15 @@ void send_report() {
     } else {
         serial_write(outgoing_reports[or_head] + 1, report_sizes[report_id] + 1, FORWARDER_UART);
     }
+    runtime_diagnostics.last_report_target_screen = target_screen;
+    runtime_diagnostics.last_report_id = report_id;
+    if (report_id == REPORT_ID_MOUSE_RELATIVE) {
+        runtime_diagnostics.movement_reports_sent++;
+    }
 
     or_head = (or_head + 1) % OR_BUFSIZE;
     or_items--;
+    runtime_diagnostics.outgoing_queue_depth = or_items;
 
     reports_sent++;
 }

@@ -38,4 +38,5 @@ enum RuntimeCommand: UInt8 {
     case setHostCursor = 2
     case setMouseConfig = 3
     case getMouseConfig = 4
+    case getDiagnostics = 5
 }

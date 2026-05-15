@@ -14,6 +14,8 @@
 
 bool led_state = false;
 bool forwarder_active = false;
+RuntimeCommand last_runtime_command = RuntimeCommand::GET_STATUS;
+runtime_diagnostics_t runtime_diagnostics = {};
 
 bool runtime_report_ok(const uint8_t* buffer, uint16_t bufsize) {
     if (bufsize < RUNTIME_SIZE || ((const runtime_set_feature_t*) buffer)->version != CONFIG_VERSION) {
@@ -96,18 +98,23 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
     }
 
     const runtime_set_feature_t* runtime_buffer = (const runtime_set_feature_t*) buffer;
+    last_runtime_command = runtime_buffer->command;
     switch (runtime_buffer->command) {
         case RuntimeCommand::SET_HOST_CURSOR: {
             runtime_cursor_t cursor;
             memcpy(&cursor, runtime_buffer->data, sizeof(cursor));
             cursor.active_screen = 1;
+            runtime_diagnostics.last_host_cursor = cursor;
+            runtime_diagnostics.host_reports_accepted++;
             send_forwarder_cursor_report(cursor);
+            last_runtime_command = RuntimeCommand::GET_STATUS;
             break;
         }
         case RuntimeCommand::SET_MOUSE_CONFIG: {
             macos_mouse_config_t mouse_config;
             memcpy(&mouse_config, runtime_buffer->data, sizeof(mouse_config));
             send_forwarder_mouse_config_report(mouse_config);
+            last_runtime_command = RuntimeCommand::GET_STATUS;
             break;
         }
         default:
@@ -123,8 +130,13 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
     runtime_get_feature_t* runtime_buffer = (runtime_get_feature_t*) buffer;
     memset(runtime_buffer, 0, sizeof(runtime_get_feature_t));
 
-    runtime_status_t* status = (runtime_status_t*) runtime_buffer;
-    status->cursor.active_screen = forwarder_active ? 1 : -1;
+    if (last_runtime_command == RuntimeCommand::GET_DIAGNOSTICS) {
+        runtime_diagnostics_t* diagnostics = (runtime_diagnostics_t*) runtime_buffer;
+        *diagnostics = runtime_diagnostics;
+    } else {
+        runtime_status_t* status = (runtime_status_t*) runtime_buffer;
+        status->cursor.active_screen = forwarder_active ? 1 : -1;
+    }
 
     runtime_buffer->crc32 = crc32((uint8_t*) runtime_buffer, RUNTIME_SIZE - 4);
     return RUNTIME_SIZE;

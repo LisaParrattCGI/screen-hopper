@@ -35,6 +35,7 @@ export const GET_RUNTIME_STATUS = 1;
 export const SET_RUNTIME_HOST_CURSOR = 2;
 export const SET_RUNTIME_MOUSE_CONFIG = 3;
 export const GET_RUNTIME_MOUSE_CONFIG = 4;
+export const GET_RUNTIME_DIAGNOSTICS = 5;
 
 export const DEFAULT_MOUSE_CONFIG = {
     'tracking_speed': 0.6875,

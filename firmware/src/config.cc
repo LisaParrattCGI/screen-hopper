@@ -112,6 +112,11 @@ void fill_runtime_status(runtime_status_t* status) {
     fill_mouse_config(&status->mouse_config);
 }
 
+void fill_runtime_diagnostics(runtime_diagnostics_t* diagnostics) {
+    memset(diagnostics, 0, sizeof(runtime_diagnostics_t));
+    *diagnostics = get_runtime_diagnostics();
+}
+
 void load_config() {
     if (checksum_ok(FLASH_CONFIG_IN_MEMORY, FLASH_SECTOR_SIZE) && version_ok(FLASH_CONFIG_IN_MEMORY)) {
         persist_config_t* config = (persist_config_t*) FLASH_CONFIG_IN_MEMORY;
@@ -265,6 +270,9 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
             case RuntimeCommand::GET_MOUSE_CONFIG:
                 fill_mouse_config((macos_mouse_config_t*) runtime_buffer);
                 break;
+            case RuntimeCommand::GET_DIAGNOSTICS:
+                fill_runtime_diagnostics((runtime_diagnostics_t*) runtime_buffer);
+                break;
             case RuntimeCommand::GET_STATUS:
             default:
                 fill_runtime_status((runtime_status_t*) runtime_buffer);
@@ -371,6 +379,7 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                     break;
                 }
                 case RuntimeCommand::GET_MOUSE_CONFIG:
+                case RuntimeCommand::GET_DIAGNOSTICS:
                 case RuntimeCommand::GET_STATUS:
                 case RuntimeCommand::NO_COMMAND:
                 default:

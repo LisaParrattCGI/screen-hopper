@@ -55,6 +55,7 @@ enum class RuntimeCommand : int8_t {
     SET_HOST_CURSOR = 2,
     SET_MOUSE_CONFIG = 3,
     GET_MOUSE_CONFIG = 4,
+    GET_DIAGNOSTICS = 5,
 };
 
 struct usage_def_t {
@@ -202,6 +203,24 @@ struct __attribute__((packed)) runtime_status_t {
     uint8_t placement_active;
     uint8_t placement_anchor_pending;
     macos_mouse_config_t mouse_config;
+};
+
+struct __attribute__((packed)) runtime_diagnostics_t {
+    runtime_cursor_t last_host_cursor;
+    int32_t last_host_correction_x;
+    int32_t last_host_correction_y;
+    int16_t last_raw_dx;
+    int16_t last_raw_dy;
+    int32_t last_predicted_dx;
+    int32_t last_predicted_dy;
+    uint32_t movement_reports_queued;
+    uint32_t movement_reports_sent;
+    uint16_t host_reports_accepted;
+    uint16_t host_reports_ignored;
+    uint8_t last_host_ignore_reason;
+    uint8_t outgoing_queue_depth;
+    uint8_t last_report_target_screen;
+    uint8_t last_report_id;
 };
 
 #endif
