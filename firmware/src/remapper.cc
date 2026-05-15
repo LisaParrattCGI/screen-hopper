@@ -61,7 +61,7 @@ uint8_t* report_masks_relative[MAX_INPUT_REPORT_ID + 1];
 uint8_t* report_masks_absolute[MAX_INPUT_REPORT_ID + 1];
 uint16_t report_sizes[MAX_INPUT_REPORT_ID + 1];
 
-#define OR_BUFSIZE 32
+#define OR_BUFSIZE 128
 uint8_t outgoing_reports[OR_BUFSIZE][CFG_TUD_HID_EP_BUFSIZE + 2];
 bool outgoing_reports_mergeable[OR_BUFSIZE];
 bool outgoing_reports_cursor_placement[OR_BUFSIZE];
