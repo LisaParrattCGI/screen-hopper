@@ -64,6 +64,10 @@ uint16_t report_sizes[MAX_INPUT_REPORT_ID + 1];
 #define OR_BUFSIZE 32
 uint8_t outgoing_reports[OR_BUFSIZE][CFG_TUD_HID_EP_BUFSIZE + 2];
 bool outgoing_reports_mergeable[OR_BUFSIZE];
+bool outgoing_reports_cursor_placement[OR_BUFSIZE];
+uint8_t outgoing_reports_cursor_placement_generation[OR_BUFSIZE];
+double outgoing_reports_cursor_placement_dx[OR_BUFSIZE];
+double outgoing_reports_cursor_placement_dy[OR_BUFSIZE];
 uint8_t or_head = 0;
 uint8_t or_tail = 0;
 uint8_t or_items = 0;
@@ -116,8 +120,12 @@ struct cursor_placement_t {
     int8_t screen;
     double predicted_x;
     double predicted_y;
+    double queued_x;
+    double queued_y;
     double target_x;
     double target_y;
+    uint8_t generation;
+    uint8_t pending_reports;
 };
 
 cursor_placement_t cursor_placement = {};
@@ -338,6 +346,10 @@ bool queue_outgoing_report(int8_t target_screen, uint8_t report_id, const uint8_
     outgoing_reports[or_tail][0] = (uint8_t) target_screen;
     outgoing_reports[or_tail][1] = report_id;
     outgoing_reports_mergeable[or_tail] = mergeable;
+    outgoing_reports_cursor_placement[or_tail] = false;
+    outgoing_reports_cursor_placement_generation[or_tail] = 0;
+    outgoing_reports_cursor_placement_dx[or_tail] = 0.0;
+    outgoing_reports_cursor_placement_dy[or_tail] = 0.0;
     memcpy(outgoing_reports[or_tail] + 2, report, report_sizes[report_id]);
     or_tail = (or_tail + 1) % OR_BUFSIZE;
     or_items++;
@@ -346,6 +358,15 @@ bool queue_outgoing_report(int8_t target_screen, uint8_t report_id, const uint8_
         runtime_diagnostics.movement_reports_queued++;
     }
     return true;
+}
+
+void mark_last_outgoing_report_as_cursor_placement(double predicted_dx, double predicted_dy) {
+    uint8_t index = (or_tail + OR_BUFSIZE - 1) % OR_BUFSIZE;
+    outgoing_reports_cursor_placement[index] = true;
+    outgoing_reports_cursor_placement_generation[index] = cursor_placement.generation;
+    outgoing_reports_cursor_placement_dx[index] = predicted_dx;
+    outgoing_reports_cursor_placement_dy[index] = predicted_dy;
+    cursor_placement.pending_reports++;
 }
 
 usage_def_t& our_usage_for_report(uint8_t report_id, uint32_t usage) {
@@ -531,8 +552,12 @@ void start_cursor_placement(int8_t screen) {
     cursor_placement.screen = screen;
     cursor_placement.predicted_x = 0.0;
     cursor_placement.predicted_y = 0.0;
+    cursor_placement.queued_x = 0.0;
+    cursor_placement.queued_y = 0.0;
     cursor_placement.target_x = 0.0;
     cursor_placement.target_y = 0.0;
+    cursor_placement.generation++;
+    cursor_placement.pending_reports = 0;
     update_cursor_placement_target();
 }
 
@@ -611,12 +636,18 @@ void emit_cursor_placement_reports() {
     }
 
     while (cursor_placement.active && or_items < OR_BUFSIZE - 1) {
-        double remaining_x = cursor_placement.target_x - cursor_placement.predicted_x;
-        double remaining_y = cursor_placement.target_y - cursor_placement.predicted_y;
+        double delivered_remaining_x = cursor_placement.target_x - cursor_placement.predicted_x;
+        double delivered_remaining_y = cursor_placement.target_y - cursor_placement.predicted_y;
+        double remaining_x = cursor_placement.target_x - cursor_placement.queued_x;
+        double remaining_y = cursor_placement.target_y - cursor_placement.queued_y;
 
         if (abs_double(remaining_x) <= placement_tolerance_screen_coords() &&
             abs_double(remaining_y) <= placement_tolerance_screen_coords()) {
-            cursor_placement.active = false;
+            if (cursor_placement.pending_reports == 0 &&
+                abs_double(delivered_remaining_x) <= placement_tolerance_screen_coords() &&
+                abs_double(delivered_remaining_y) <= placement_tolerance_screen_coords()) {
+                cursor_placement.active = false;
+            }
             break;
         }
 
@@ -638,8 +669,11 @@ void emit_cursor_placement_reports() {
         }
 
         macos_delta_t accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
-        cursor_placement.predicted_x += screen_coord_delta(accelerated.dx);
-        cursor_placement.predicted_y += screen_coord_delta(accelerated.dy);
+        double predicted_dx = screen_coord_delta(accelerated.dx);
+        double predicted_dy = screen_coord_delta(accelerated.dy);
+        mark_last_outgoing_report_as_cursor_placement(predicted_dx, predicted_dy);
+        cursor_placement.queued_x += predicted_dx;
+        cursor_placement.queued_y += predicted_dy;
     }
 }
 
@@ -659,6 +693,29 @@ runtime_diagnostics_t get_runtime_diagnostics() {
 void get_runtime_placement_flags(uint8_t& placement_active, uint8_t& placement_anchor_pending) {
     placement_active = cursor_placement.active ? 1 : 0;
     placement_anchor_pending = cursor_placement.anchor_pending ? 1 : 0;
+}
+
+void apply_cursor_placement_delivery(uint8_t report_index) {
+    if (!outgoing_reports_cursor_placement[report_index]) {
+        return;
+    }
+
+    outgoing_reports_cursor_placement[report_index] = false;
+    if (outgoing_reports_cursor_placement_generation[report_index] != cursor_placement.generation) {
+        return;
+    }
+
+    cursor_placement.predicted_x += outgoing_reports_cursor_placement_dx[report_index];
+    cursor_placement.predicted_y += outgoing_reports_cursor_placement_dy[report_index];
+    if (cursor_placement.pending_reports > 0) {
+        cursor_placement.pending_reports--;
+    }
+
+    if (cursor_placement.active && cursor_placement.pending_reports == 0 &&
+        abs_double(cursor_placement.target_x - cursor_placement.predicted_x) <= placement_tolerance_screen_coords() &&
+        abs_double(cursor_placement.target_y - cursor_placement.predicted_y) <= placement_tolerance_screen_coords()) {
+        cursor_placement.active = false;
+    }
 }
 
 void set_cursor_from_host(const runtime_cursor_t& cursor) {
@@ -970,6 +1027,8 @@ void send_report() {
     if (!transmitted) {
         return;
     }
+
+    apply_cursor_placement_delivery(or_head);
 
     runtime_diagnostics.last_report_target_screen = target_screen;
     runtime_diagnostics.last_report_id = report_id;
