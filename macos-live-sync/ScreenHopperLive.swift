@@ -1724,6 +1724,12 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private var configWindow: ConfigWindowController?
     private var debugWindow: DebugWindowController?
     private var debugTimer: Timer?
+    private var debugLogHeaderPrinted = false
+    private let debugLogDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     init(options: Options) {
         self.options = options
@@ -1850,8 +1856,10 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             self?.debugWindow = nil
             self?.debugTimer?.invalidate()
             self?.debugTimer = nil
+            self?.debugLogHeaderPrinted = false
         }
         debugWindow = controller
+        debugLogHeaderPrinted = false
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         startDebugTimer()
@@ -1886,9 +1894,123 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             let status = try device.fetchStatus()
             let diagnostics = try device.fetchDiagnostics()
             debugWindow.update(host: hostCursor, localMouse: localMouse, device: status, diagnostics: diagnostics, error: nil)
+            logDebugSample(host: hostCursor, localMouse: localMouse, status: status, diagnostics: diagnostics)
         } catch {
             self.device = nil
             debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, diagnostics: nil, error: "Screen Hopper: \(briefError(error))")
+        }
+    }
+
+    private func logDebugHeaderIfNeeded() {
+        guard !debugLogHeaderPrinted else {
+            return
+        }
+
+        print([
+            "timestamp",
+            "host_x",
+            "host_y",
+            "host_report_screen",
+            "hopper_x",
+            "hopper_y",
+            "hopper_active_screen",
+            "last_host_x",
+            "last_host_y",
+            "last_host_screen",
+            "host_correction_x",
+            "host_correction_y",
+            "raw_dx",
+            "raw_dy",
+            "predicted_dx",
+            "predicted_dy",
+            "movement_queued",
+            "movement_sent",
+            "host_reports_accepted",
+            "host_reports_ignored",
+            "last_ignore_reason",
+            "queue_depth",
+            "last_report_screen",
+            "last_report_id",
+            "local_tracking",
+            "hopper_tracking",
+            "local_resolution",
+            "hopper_resolution",
+            "local_frame_rate",
+            "hopper_frame_rate",
+            "local_fixed_multiplier",
+            "hopper_fixed_multiplier",
+            "local_placement_tolerance",
+            "hopper_placement_tolerance",
+        ].joined(separator: "\t"))
+        debugLogHeaderPrinted = true
+    }
+
+    private func logDebugSample(host: RuntimeCursor, localMouse: MouseConfig, status: RuntimeStatus, diagnostics: RuntimeDiagnostics) {
+        logDebugHeaderIfNeeded()
+
+        print([
+            debugLogDateFormatter.string(from: Date()),
+            debugCoordinateString(host.x),
+            debugCoordinateString(host.y),
+            screenLogString(host.activeScreen),
+            debugCoordinateString(status.cursor.x),
+            debugCoordinateString(status.cursor.y),
+            screenLogString(status.cursor.activeScreen),
+            debugCoordinateString(diagnostics.lastHostCursor.x),
+            debugCoordinateString(diagnostics.lastHostCursor.y),
+            screenLogString(diagnostics.lastHostCursor.activeScreen),
+            debugDeltaString(diagnostics.lastHostCorrectionX),
+            debugDeltaString(diagnostics.lastHostCorrectionY),
+            "\(diagnostics.lastRawDX)",
+            "\(diagnostics.lastRawDY)",
+            debugDeltaString(diagnostics.lastPredictedDX),
+            debugDeltaString(diagnostics.lastPredictedDY),
+            "\(diagnostics.movementReportsQueued)",
+            "\(diagnostics.movementReportsSent)",
+            "\(diagnostics.hostReportsAccepted)",
+            "\(diagnostics.hostReportsIgnored)",
+            debugIgnoreReasonString(diagnostics.lastHostIgnoreReason),
+            "\(diagnostics.outgoingQueueDepth)",
+            "\(diagnostics.lastReportTargetScreen)",
+            "\(diagnostics.lastReportID)",
+            decimalString(localMouse.trackingSpeed),
+            decimalString(status.mouse.trackingSpeed),
+            decimalString(localMouse.pointerResolution),
+            decimalString(status.mouse.pointerResolution),
+            decimalString(localMouse.frameRate),
+            decimalString(status.mouse.frameRate),
+            decimalString(localMouse.fixedMultiplier),
+            decimalString(status.mouse.fixedMultiplier),
+            decimalString(localMouse.placementTolerance),
+            decimalString(status.mouse.placementTolerance),
+        ].joined(separator: "\t"))
+        fflush(stdout)
+    }
+
+    private func debugCoordinateString(_ value: Int64) -> String {
+        decimalString(Double(value) / screenCoordinateScale)
+    }
+
+    private func debugDeltaString(_ value: Int32) -> String {
+        decimalString(Double(value) / screenCoordinateScale)
+    }
+
+    private func screenLogString(_ screen: Int8) -> String {
+        screen >= 0 ? "\(screen)" : "unknown"
+    }
+
+    private func debugIgnoreReasonString(_ reason: UInt8) -> String {
+        switch reason {
+        case 0:
+            return "accepted"
+        case 1:
+            return "unknown-screen"
+        case 2:
+            return "screen-out-of-range"
+        case 3:
+            return "inactive-screen"
+        default:
+            return "reason-\(reason)"
         }
     }
 
