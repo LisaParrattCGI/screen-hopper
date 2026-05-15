@@ -1342,11 +1342,21 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
     private let deviceYLabel = NSTextField(labelWithString: "-")
     private let deviceScreenLabel = NSTextField(labelWithString: "-")
     private let placementLabel = NSTextField(labelWithString: "-")
+    private let localTrackingSpeedLabel = NSTextField(labelWithString: "-")
+    private let deviceTrackingSpeedLabel = NSTextField(labelWithString: "-")
+    private let localPointerResolutionLabel = NSTextField(labelWithString: "-")
+    private let devicePointerResolutionLabel = NSTextField(labelWithString: "-")
+    private let localFrameRateLabel = NSTextField(labelWithString: "-")
+    private let deviceFrameRateLabel = NSTextField(labelWithString: "-")
+    private let localFixedMultiplierLabel = NSTextField(labelWithString: "-")
+    private let deviceFixedMultiplierLabel = NSTextField(labelWithString: "-")
+    private let localPlacementToleranceLabel = NSTextField(labelWithString: "-")
+    private let devicePlacementToleranceLabel = NSTextField(labelWithString: "-")
     private let statusLabel = NSTextField(labelWithString: "Waiting for data...")
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 310),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 470),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -1363,10 +1373,11 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         fatalError("init(coder:) has not been implemented")
     }
 
-    func update(host: RuntimeCursor, device: RuntimeStatus?, error: String?) {
+    func update(host: RuntimeCursor, localMouse: MouseConfig, device: RuntimeStatus?, error: String?) {
         hostXLabel.stringValue = coordinateString(host.x)
         hostYLabel.stringValue = coordinateString(host.y)
         hostScreenLabel.stringValue = screenString(host.activeScreen)
+        updateMouseLabels(local: localMouse, device: device?.mouse)
 
         if let device {
             deviceXLabel.stringValue = coordinateString(device.cursor.x)
@@ -1412,6 +1423,7 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
             ("Active screen", deviceScreenLabel),
             ("Placement", placementLabel),
         ]))
+        root.addArrangedSubview(mouseModelSection())
 
         statusLabel.font = NSFont.systemFont(ofSize: 12)
         statusLabel.textColor = .secondaryLabelColor
@@ -1461,8 +1473,116 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         return row
     }
 
+    private func mouseModelSection() -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+
+        let titleLabel = NSTextField(labelWithString: "Mouse Acceleration Model")
+        titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
+        stack.addArrangedSubview(titleLabel)
+
+        stack.addArrangedSubview(mouseHeaderRow())
+        stack.addArrangedSubview(mouseModelRow("Tracking speed", localTrackingSpeedLabel, deviceTrackingSpeedLabel))
+        stack.addArrangedSubview(mouseModelRow("Pointer resolution", localPointerResolutionLabel, devicePointerResolutionLabel))
+        stack.addArrangedSubview(mouseModelRow("Frame rate", localFrameRateLabel, deviceFrameRateLabel))
+        stack.addArrangedSubview(mouseModelRow("Fixed multiplier", localFixedMultiplierLabel, deviceFixedMultiplierLabel))
+        stack.addArrangedSubview(mouseModelRow("Placement tolerance", localPlacementToleranceLabel, devicePlacementToleranceLabel))
+        return stack
+    }
+
+    private func mouseHeaderRow() -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 12
+
+        let spacer = NSTextField(labelWithString: "")
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.widthAnchor.constraint(equalToConstant: 150).isActive = true
+
+        let local = mouseHeaderLabel("Local Mac")
+        let hopper = mouseHeaderLabel("Screen Hopper")
+
+        row.addArrangedSubview(spacer)
+        row.addArrangedSubview(local)
+        row.addArrangedSubview(hopper)
+        return row
+    }
+
+    private func mouseModelRow(_ name: String, _ localLabel: NSTextField, _ deviceLabel: NSTextField) -> NSView {
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 12
+
+        let nameLabel = NSTextField(labelWithString: name)
+        nameLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        nameLabel.textColor = .secondaryLabelColor
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.widthAnchor.constraint(equalToConstant: 150).isActive = true
+
+        styleMouseValueLabel(localLabel)
+        styleMouseValueLabel(deviceLabel)
+
+        row.addArrangedSubview(nameLabel)
+        row.addArrangedSubview(localLabel)
+        row.addArrangedSubview(deviceLabel)
+        return row
+    }
+
+    private func mouseHeaderLabel(_ text: String) -> NSTextField {
+        let label = NSTextField(labelWithString: text)
+        label.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        label.alignment = .right
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.widthAnchor.constraint(equalToConstant: 130).isActive = true
+        return label
+    }
+
+    private func styleMouseValueLabel(_ label: NSTextField) {
+        label.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+        label.alignment = .right
+        label.translatesAutoresizingMaskIntoConstraints = false
+        if label.constraints.first(where: { $0.firstAttribute == .width }) == nil {
+            label.widthAnchor.constraint(equalToConstant: 130).isActive = true
+        }
+    }
+
+    private func updateMouseLabels(local: MouseConfig, device: MouseConfig?) {
+        localTrackingSpeedLabel.stringValue = mouseValueString(local.trackingSpeed)
+        localPointerResolutionLabel.stringValue = mouseValueString(local.pointerResolution)
+        localFrameRateLabel.stringValue = mouseValueString(local.frameRate)
+        localFixedMultiplierLabel.stringValue = mouseValueString(local.fixedMultiplier)
+        localPlacementToleranceLabel.stringValue = mouseValueString(local.placementTolerance)
+
+        guard let device else {
+            for label in [
+                deviceTrackingSpeedLabel,
+                devicePointerResolutionLabel,
+                deviceFrameRateLabel,
+                deviceFixedMultiplierLabel,
+                devicePlacementToleranceLabel,
+            ] {
+                label.stringValue = "-"
+            }
+            return
+        }
+
+        deviceTrackingSpeedLabel.stringValue = mouseValueString(device.trackingSpeed)
+        devicePointerResolutionLabel.stringValue = mouseValueString(device.pointerResolution)
+        deviceFrameRateLabel.stringValue = mouseValueString(device.frameRate)
+        deviceFixedMultiplierLabel.stringValue = mouseValueString(device.fixedMultiplier)
+        devicePlacementToleranceLabel.stringValue = mouseValueString(device.placementTolerance)
+    }
+
     private func coordinateString(_ value: Int64) -> String {
         decimalString(Double(value) / screenCoordinateScale)
+    }
+
+    private func mouseValueString(_ value: Double) -> String {
+        decimalString(value)
     }
 
     private func screenString(_ screen: Int8) -> String {
@@ -1642,22 +1762,23 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         }
 
         let hostCursor = currentCursor(reportedScreenOverride: options.reportedScreenOverride)
+        let localMouse = configReader.currentConfig()
 
         if device == nil {
             device = locator.findRuntimeDevice()
         }
 
         guard let device else {
-            debugWindow.update(host: hostCursor, device: nil, error: locator.disconnectedMessage)
+            debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, error: locator.disconnectedMessage)
             return
         }
 
         do {
             let status = try device.fetchStatus()
-            debugWindow.update(host: hostCursor, device: status, error: nil)
+            debugWindow.update(host: hostCursor, localMouse: localMouse, device: status, error: nil)
         } catch {
             self.device = nil
-            debugWindow.update(host: hostCursor, device: nil, error: "Screen Hopper: \(briefError(error))")
+            debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, error: "Screen Hopper: \(briefError(error))")
         }
     }
 
