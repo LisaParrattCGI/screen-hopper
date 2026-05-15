@@ -61,7 +61,7 @@ uint8_t* report_masks_relative[MAX_INPUT_REPORT_ID + 1];
 uint8_t* report_masks_absolute[MAX_INPUT_REPORT_ID + 1];
 uint16_t report_sizes[MAX_INPUT_REPORT_ID + 1];
 
-#define OR_BUFSIZE 8
+#define OR_BUFSIZE 32
 uint8_t outgoing_reports[OR_BUFSIZE][CFG_TUD_HID_EP_BUFSIZE + 2];
 bool outgoing_reports_mergeable[OR_BUFSIZE];
 uint8_t or_head = 0;
@@ -794,8 +794,14 @@ void process_mapping(bool auto_repeat) {
         input_state[usage] = 0;
     }
 
-    int16_t dx = consume_relative_axis_movement(MOUSE_X_USAGE);
-    int16_t dy = consume_relative_axis_movement(MOUSE_Y_USAGE);
+    int16_t dx = 0;
+    int16_t dy = 0;
+    // Keep the cursor model coupled to the reports the host can actually receive.
+    // If the outgoing queue is full, leave accumulated X/Y pending for a later pass.
+    if (or_items < OR_BUFSIZE) {
+        dx = consume_relative_axis_movement(MOUSE_X_USAGE);
+        dy = consume_relative_axis_movement(MOUSE_Y_USAGE);
+    }
     runtime_diagnostics.last_raw_dx = dx;
     runtime_diagnostics.last_raw_dy = dy;
 
@@ -952,13 +958,19 @@ void send_report() {
     uint8_t target_screen = outgoing_reports[or_head][0];
     uint8_t report_id = outgoing_reports[or_head][1];
 
+    bool transmitted = true;
     if (target_screen == 0) {
-        if (tud_hid_report(report_id, outgoing_reports[or_head] + 2, report_sizes[report_id])) {
+        transmitted = tud_hid_report(report_id, outgoing_reports[or_head] + 2, report_sizes[report_id]);
+        if (transmitted) {
             status_led_flash_green();
         }
     } else {
         serial_write(outgoing_reports[or_head] + 1, report_sizes[report_id] + 1, FORWARDER_UART);
     }
+    if (!transmitted) {
+        return;
+    }
+
     runtime_diagnostics.last_report_target_screen = target_screen;
     runtime_diagnostics.last_report_id = report_id;
     if (report_id == REPORT_ID_MOUSE_RELATIVE) {
