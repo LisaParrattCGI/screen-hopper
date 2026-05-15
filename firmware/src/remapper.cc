@@ -701,6 +701,10 @@ void get_runtime_placement_flags(uint8_t& placement_active, uint8_t& placement_a
     placement_anchor_pending = cursor_placement.anchor_pending ? 1 : 0;
 }
 
+bool cursor_placement_in_progress() {
+    return cursor_placement.active || cursor_placement.anchor_pending || cursor_placement.pending_reports > 0;
+}
+
 void apply_cursor_placement_delivery(uint8_t report_index) {
     if (!outgoing_reports_cursor_placement[report_index]) {
         return;
@@ -738,6 +742,12 @@ void set_cursor_from_host(const runtime_cursor_t& cursor) {
     runtime_diagnostics.last_host_cursor = cursor;
     runtime_diagnostics.last_host_correction_x = clamp_diagnostic_delta(host_x - cursor_x);
     runtime_diagnostics.last_host_correction_y = clamp_diagnostic_delta(host_y - cursor_y);
+    if (cursor_placement_in_progress()) {
+        runtime_diagnostics.host_reports_ignored++;
+        runtime_diagnostics.last_host_ignore_reason = 4;
+        return;
+    }
+
     runtime_diagnostics.host_reports_accepted++;
     runtime_diagnostics.last_host_ignore_reason = 0;
     cursor_x = host_x;

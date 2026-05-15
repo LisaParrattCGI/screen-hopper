@@ -1703,6 +1703,8 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
             return "screen out of range"
         case 3:
             return "inactive screen"
+        case 4:
+            return "placement active"
         default:
             return "reason \(reason)"
         }
@@ -2009,6 +2011,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             return "screen-out-of-range"
         case 3:
             return "inactive-screen"
+        case 4:
+            return "placement-active"
         default:
             return "reason-\(reason)"
         }
