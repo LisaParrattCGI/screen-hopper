@@ -62,6 +62,8 @@ uint8_t* report_masks_absolute[MAX_INPUT_REPORT_ID + 1];
 uint16_t report_sizes[MAX_INPUT_REPORT_ID + 1];
 
 #define OR_BUFSIZE 128
+#define CURSOR_PLACEMENT_REPORTS_PER_PASS 1
+#define CURSOR_PLACEMENT_QUEUE_RESERVE 4
 uint8_t outgoing_reports[OR_BUFSIZE][CFG_TUD_HID_EP_BUFSIZE + 2];
 bool outgoing_reports_mergeable[OR_BUFSIZE];
 bool outgoing_reports_cursor_placement[OR_BUFSIZE];
@@ -635,7 +637,10 @@ void emit_cursor_placement_reports() {
         cursor_placement.active = true;
     }
 
-    while (cursor_placement.active && or_items < OR_BUFSIZE - 1) {
+    uint8_t reports_queued = 0;
+    while (cursor_placement.active &&
+           reports_queued < CURSOR_PLACEMENT_REPORTS_PER_PASS &&
+           or_items + CURSOR_PLACEMENT_QUEUE_RESERVE < OR_BUFSIZE) {
         double delivered_remaining_x = cursor_placement.target_x - cursor_placement.predicted_x;
         double delivered_remaining_y = cursor_placement.target_y - cursor_placement.predicted_y;
         double remaining_x = cursor_placement.target_x - cursor_placement.queued_x;
@@ -674,6 +679,7 @@ void emit_cursor_placement_reports() {
         mark_last_outgoing_report_as_cursor_placement(predicted_dx, predicted_dy);
         cursor_placement.queued_x += predicted_dx;
         cursor_placement.queued_y += predicted_dy;
+        reports_queued++;
     }
 }
 
