@@ -396,31 +396,6 @@ void mark_last_outgoing_report_as_cursor_placement(double predicted_dx, double p
     cursor_placement.pending_reports++;
 }
 
-void adjust_cursor_prediction_for_coalesced_movement(
-    int16_t old_dx,
-    int16_t old_dy,
-    int16_t added_dx,
-    int16_t added_dy,
-    int16_t coalesced_dx,
-    int16_t coalesced_dy,
-    bool& screen_changed) {
-    macos_delta_t old_accelerated = apply_macos_acceleration(old_dx, old_dy, macos_pointer_acceleration);
-    macos_delta_t added_accelerated = apply_macos_acceleration(added_dx, added_dy, macos_pointer_acceleration);
-    macos_delta_t coalesced_accelerated = apply_macos_acceleration(coalesced_dx, coalesced_dy, macos_pointer_acceleration);
-
-    double adjustment_x = screen_coord_delta(coalesced_accelerated.dx) -
-                          screen_coord_delta(old_accelerated.dx) -
-                          screen_coord_delta(added_accelerated.dx);
-    double adjustment_y = screen_coord_delta(coalesced_accelerated.dy) -
-                          screen_coord_delta(old_accelerated.dy) -
-                          screen_coord_delta(added_accelerated.dy);
-    int64_t adjusted_dx = consume_fractional_cursor_delta(adjustment_x, cursor_fraction_x);
-    int64_t adjusted_dy = consume_fractional_cursor_delta(adjustment_y, cursor_fraction_y);
-    runtime_diagnostics.last_predicted_dx = clamp_diagnostic_delta((int32_t) runtime_diagnostics.last_predicted_dx + adjusted_dx);
-    runtime_diagnostics.last_predicted_dy = clamp_diagnostic_delta((int32_t) runtime_diagnostics.last_predicted_dy + adjusted_dy);
-    apply_cursor_delta(adjusted_dx, adjusted_dy, screen_changed);
-}
-
 usage_def_t& our_usage_for_report(uint8_t report_id, uint32_t usage) {
     return our_usages[report_id][usage];
 }
@@ -438,7 +413,7 @@ bool queue_mouse_absolute(int8_t target_screen, int32_t x, int32_t y) {
     return queue_outgoing_report(target_screen, REPORT_ID_MOUSE, temp_report, false);
 }
 
-bool queue_mouse_relative(int8_t target_screen, int16_t dx, int16_t dy, bool mergeable, bool* screen_changed = nullptr) {
+bool queue_mouse_relative(int8_t target_screen, int16_t dx, int16_t dy, bool mergeable) {
     usage_def_t& our_usage_x = our_usage_for_report(REPORT_ID_MOUSE_RELATIVE, MOUSE_X_USAGE);
     usage_def_t& our_usage_y = our_usage_for_report(REPORT_ID_MOUSE_RELATIVE, MOUSE_Y_USAGE);
 
@@ -455,14 +430,7 @@ bool queue_mouse_relative(int8_t target_screen, int16_t dx, int16_t dy, bool mer
             outgoing_reports[prev][0] == (uint8_t) target_screen &&
             outgoing_reports[prev][1] == REPORT_ID_MOUSE_RELATIVE &&
             !differ_on_absolute(outgoing_reports[prev] + 2, temp_report, REPORT_ID_MOUSE_RELATIVE)) {
-            int16_t old_dx = (int16_t) get_usage_value(outgoing_reports[prev] + 2, REPORT_ID_MOUSE_RELATIVE, our_usage_x);
-            int16_t old_dy = (int16_t) get_usage_value(outgoing_reports[prev] + 2, REPORT_ID_MOUSE_RELATIVE, our_usage_y);
             aggregate_relative(outgoing_reports[prev] + 2, temp_report, REPORT_ID_MOUSE_RELATIVE);
-            if (screen_changed != nullptr) {
-                int16_t coalesced_dx = (int16_t) get_usage_value(outgoing_reports[prev] + 2, REPORT_ID_MOUSE_RELATIVE, our_usage_x);
-                int16_t coalesced_dy = (int16_t) get_usage_value(outgoing_reports[prev] + 2, REPORT_ID_MOUSE_RELATIVE, our_usage_y);
-                adjust_cursor_prediction_for_coalesced_movement(old_dx, old_dy, dx, dy, coalesced_dx, coalesced_dy, *screen_changed);
-            }
             return true;
         }
     }
@@ -818,6 +786,8 @@ void update_last_sent_movement_diagnostics(uint8_t report_index, uint8_t report_
     if (report_id != REPORT_ID_MOUSE_RELATIVE) {
         runtime_diagnostics.last_sent_dx = 0;
         runtime_diagnostics.last_sent_dy = 0;
+        runtime_diagnostics.last_predicted_dx = 0;
+        runtime_diagnostics.last_predicted_dy = 0;
         return;
     }
 
@@ -826,6 +796,36 @@ void update_last_sent_movement_diagnostics(uint8_t report_index, uint8_t report_
     const uint8_t* report = outgoing_reports[report_index] + 2;
     runtime_diagnostics.last_sent_dx = clamp_diagnostic_axis(get_usage_value(report, report_id, our_usage_x));
     runtime_diagnostics.last_sent_dy = clamp_diagnostic_axis(get_usage_value(report, report_id, our_usage_y));
+}
+
+void get_sent_relative_axes(uint8_t report_index, int16_t& dx, int16_t& dy) {
+    usage_def_t& our_usage_x = our_usage_for_report(REPORT_ID_MOUSE_RELATIVE, MOUSE_X_USAGE);
+    usage_def_t& our_usage_y = our_usage_for_report(REPORT_ID_MOUSE_RELATIVE, MOUSE_Y_USAGE);
+    const uint8_t* report = outgoing_reports[report_index] + 2;
+    dx = (int16_t) get_usage_value(report, REPORT_ID_MOUSE_RELATIVE, our_usage_x);
+    dy = (int16_t) get_usage_value(report, REPORT_ID_MOUSE_RELATIVE, our_usage_y);
+}
+
+void apply_sent_movement_prediction(int16_t dx, int16_t dy) {
+    if (dx == 0 && dy == 0) {
+        runtime_diagnostics.last_predicted_dx = 0;
+        runtime_diagnostics.last_predicted_dy = 0;
+        return;
+    }
+
+    macos_delta_t accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
+    int64_t accelerated_dx = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dx), cursor_fraction_x);
+    int64_t accelerated_dy = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dy), cursor_fraction_y);
+    runtime_diagnostics.last_predicted_dx = clamp_diagnostic_delta(accelerated_dx);
+    runtime_diagnostics.last_predicted_dy = clamp_diagnostic_delta(accelerated_dy);
+
+    bool screen_changed = false;
+    apply_cursor_delta(accelerated_dx, accelerated_dy, screen_changed);
+    if (screen_changed && active_screen != -1) {
+        cursor_fraction_x = 0.0;
+        cursor_fraction_y = 0.0;
+        start_cursor_placement(active_screen);
+    }
 }
 
 void set_cursor_from_host(const runtime_cursor_t& cursor) {
@@ -978,17 +978,7 @@ void process_mapping(bool auto_repeat) {
     runtime_diagnostics.last_raw_dx = dx;
     runtime_diagnostics.last_raw_dy = dy;
 
-    // Track the same relative report that will be sent to the host.
-    // Apple accelerates the vector magnitude once, then applies that scalar to both axes.
-    macos_delta_t accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
-    int64_t accelerated_dx = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dx), cursor_fraction_x);
-    int64_t accelerated_dy = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dy), cursor_fraction_y);
-    runtime_diagnostics.last_predicted_dx = clamp_diagnostic_delta(accelerated_dx);
-    runtime_diagnostics.last_predicted_dy = clamp_diagnostic_delta(accelerated_dy);
-
     bool screen_changed = manual_screen_changed;
-    apply_cursor_delta(accelerated_dx, accelerated_dy, screen_changed);
-
     bool movement_absorbed_by_placement = false;
 
     // If the target host changes, anchor at its absolute origin and then place
@@ -1019,7 +1009,7 @@ void process_mapping(bool auto_repeat) {
     // Prepare relative movement report (always use REPORT_ID_MOUSE_RELATIVE for cursor movement)
     // Send raw dx/dy (not accelerated) - macOS will apply its own acceleration
     if (active_screen != -1 && !movement_absorbed_by_placement && (dx != 0 || dy != 0)) {
-        queue_mouse_relative(active_screen, dx, dy, true, &screen_changed);
+        queue_mouse_relative(active_screen, dx, dy, true);
     }
 
     // Handle buttons and scrolling via REPORT_ID_MOUSE_RELATIVE
@@ -1107,6 +1097,7 @@ void send_report() {
 
     uint8_t target_screen = outgoing_reports[or_head][0];
     uint8_t report_id = outgoing_reports[or_head][1];
+    bool cursor_placement_report = outgoing_reports_cursor_placement[or_head];
 
     bool transmitted = true;
     if (target_screen == 0) {
@@ -1122,6 +1113,11 @@ void send_report() {
     }
 
     apply_cursor_placement_delivery(or_head);
+    int16_t sent_dx = 0;
+    int16_t sent_dy = 0;
+    if (report_id == REPORT_ID_MOUSE_RELATIVE) {
+        get_sent_relative_axes(or_head, sent_dx, sent_dy);
+    }
     update_last_sent_movement_diagnostics(or_head, report_id);
 
     runtime_diagnostics.last_report_target_screen = target_screen;
@@ -1135,6 +1131,15 @@ void send_report() {
     runtime_diagnostics.outgoing_queue_depth = or_items;
 
     reports_sent++;
+
+    if (report_id == REPORT_ID_MOUSE_RELATIVE) {
+        if (cursor_placement_report) {
+            runtime_diagnostics.last_predicted_dx = 0;
+            runtime_diagnostics.last_predicted_dy = 0;
+        } else {
+            apply_sent_movement_prediction(sent_dx, sent_dy);
+        }
+    }
 }
 
 inline void read_input(const uint8_t* report, int len, uint32_t source_usage, const usage_def_t& their_usage, uint16_t interface) {
