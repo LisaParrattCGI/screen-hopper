@@ -398,6 +398,18 @@ bool queue_mouse_relative(int8_t target_screen, int16_t dx, int16_t dy, bool mer
     put_bits(temp_report, report_sizes[REPORT_ID_MOUSE_RELATIVE], our_usage_x.bitpos, our_usage_x.size, (uint16_t) dx);
     put_bits(temp_report, report_sizes[REPORT_ID_MOUSE_RELATIVE], our_usage_y.bitpos, our_usage_y.size, (uint16_t) dy);
 
+    if (mergeable && or_items > 0) {
+        uint8_t prev = (or_tail + OR_BUFSIZE - 1) % OR_BUFSIZE;
+        if (outgoing_reports_mergeable[prev] &&
+            !outgoing_reports_cursor_placement[prev] &&
+            outgoing_reports[prev][0] == (uint8_t) target_screen &&
+            outgoing_reports[prev][1] == REPORT_ID_MOUSE_RELATIVE &&
+            !differ_on_absolute(outgoing_reports[prev] + 2, temp_report, REPORT_ID_MOUSE_RELATIVE)) {
+            aggregate_relative(outgoing_reports[prev] + 2, temp_report, REPORT_ID_MOUSE_RELATIVE);
+            return true;
+        }
+    }
+
     return queue_outgoing_report(target_screen, REPORT_ID_MOUSE_RELATIVE, temp_report, mergeable);
 }
 
@@ -942,7 +954,7 @@ void process_mapping(bool auto_repeat) {
     // Prepare relative movement report (always use REPORT_ID_MOUSE_RELATIVE for cursor movement)
     // Send raw dx/dy (not accelerated) - macOS will apply its own acceleration
     if (active_screen != -1 && !movement_absorbed_by_placement && (dx != 0 || dy != 0)) {
-        queue_mouse_relative(active_screen, dx, dy, false);
+        queue_mouse_relative(active_screen, dx, dy, true);
     }
 
     // Handle buttons and scrolling via REPORT_ID_MOUSE_RELATIVE
