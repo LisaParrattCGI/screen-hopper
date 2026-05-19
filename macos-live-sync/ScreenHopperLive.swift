@@ -94,6 +94,8 @@ private struct RuntimeCursor: Equatable {
     var x: Int64
     var y: Int64
     var activeScreen: Int8
+    var displayWidth: Int64 = 0
+    var displayHeight: Int64 = 0
 }
 
 private struct RuntimeStatus {
@@ -2246,7 +2248,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private var debugTimer: Timer?
     private var previousDebugHostCursor: RuntimeCursor?
     private var previousDebugDiagnostics: RuntimeDiagnostics?
-    private let debugLogVersion = 4
+    private let debugLogVersion = 5
     private let debugLogDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -2445,6 +2447,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             "host": [
                 "x": debugCoordinateValue(host.x),
                 "y": debugCoordinateValue(host.y),
+                "display_width": debugCoordinateValue(host.displayWidth),
+                "display_height": debugCoordinateValue(host.displayHeight),
                 "reported_screen": debugScreenValue(host.activeScreen),
             ],
             "mouse": [
@@ -2474,6 +2478,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
                 "y": debugCoordinateValue(host.y),
                 "delta_x": debugCoordinateValue(hostDeltaX),
                 "delta_y": debugCoordinateValue(hostDeltaY),
+                "display_width": debugCoordinateValue(host.displayWidth),
+                "display_height": debugCoordinateValue(host.displayHeight),
                 "reported_screen": debugScreenValue(host.activeScreen),
             ],
             "hopper": [
@@ -2509,6 +2515,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
                 "y": debugCoordinateValue(host.y),
                 "delta_x": debugCoordinateValue(hostDeltaX),
                 "delta_y": debugCoordinateValue(hostDeltaY),
+                "display_width": debugCoordinateValue(host.displayWidth),
+                "display_height": debugCoordinateValue(host.displayHeight),
                 "reported_screen": debugScreenValue(host.activeScreen),
             ],
             "hopper": [
@@ -2936,15 +2944,21 @@ private func currentDisplayLocalCursor(reportedScreenOverride: Int8 = -1) -> Run
         return RuntimeCursor(
             x: Int64(((point.x - rect.minX) * screenCoordinateScale).rounded()),
             y: Int64(((point.y - rect.minY) * screenCoordinateScale).rounded()),
-            activeScreen: reportedScreenOverride
+            activeScreen: reportedScreenOverride,
+            displayWidth: Int64((rect.width * screenCoordinateScale).rounded()),
+            displayHeight: Int64((rect.height * screenCoordinateScale).rounded())
         )
     }
 
     let offset = currentDisplayOriginOffset()
+    let maxX = rects.map { $0.maxX }.max() ?? 0
+    let maxY = rects.map { $0.maxY }.max() ?? 0
     return RuntimeCursor(
         x: Int64(((point.x - offset.x) * screenCoordinateScale).rounded()),
         y: Int64(((point.y - offset.y) * screenCoordinateScale).rounded()),
-        activeScreen: reportedScreenOverride
+        activeScreen: reportedScreenOverride,
+        displayWidth: Int64(((maxX - offset.x) * screenCoordinateScale).rounded()),
+        displayHeight: Int64(((maxY - offset.y) * screenCoordinateScale).rounded())
     )
 }
 

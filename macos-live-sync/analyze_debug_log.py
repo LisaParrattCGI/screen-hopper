@@ -21,7 +21,9 @@ MACOS_ACCEL_CURVES = [
     (163840, 64881, 108790, 21627, 0, 583270, 786432),
     (196608, 65536, 123208, 26214, 0, 589824, 786432),
 ]
-SUPPORTED_LOG_VERSIONS = {3, 4}
+SUPPORTED_LOG_VERSIONS = {3, 4, 5}
+EDGE_EPSILON = 2.0
+EDGE_DELTA_EPSILON = 2.0
 
 
 def has_path(row, path):
@@ -203,6 +205,35 @@ def finite(value):
     return value is not None and math.isfinite(value)
 
 
+def likely_axis_clamped(row, axis, bound_name):
+    host = row.get("host", {})
+    interval = row.get("interval", {})
+    position = host.get(axis)
+    delta = host.get(f"delta_{axis}")
+    predicted = interval.get(f"predicted_d{axis}")
+    sent = interval.get(f"sent_d{axis}")
+    if not all(finite(value) for value in [position, delta, predicted, sent]):
+        return False
+
+    blocked = abs(delta) <= max(EDGE_DELTA_EPSILON, abs(predicted) * 0.35)
+    if not blocked:
+        return False
+
+    if position <= EDGE_EPSILON and (predicted < -EDGE_DELTA_EPSILON or sent < -EDGE_DELTA_EPSILON):
+        return True
+
+    bound = host.get(bound_name)
+    if finite(bound) and bound > 0:
+        if position >= bound - EDGE_EPSILON and (predicted > EDGE_DELTA_EPSILON or sent > EDGE_DELTA_EPSILON):
+            return True
+
+    return False
+
+
+def likely_host_edge_clamped(row):
+    return likely_axis_clamped(row, "x", "display_width") or likely_axis_clamped(row, "y", "display_height")
+
+
 def describe(name, values):
     values = [value for value in values if finite(value)]
     if not values:
@@ -256,6 +287,7 @@ def collect_interval_metrics(rows):
         metrics.append(
             {
                 "row": row,
+                "host_edge_clamped": likely_host_edge_clamped(row),
                 "sent_mag": sent_mag,
                 "host_mag": magnitude(host_dx, host_dy),
                 "prediction_mag": magnitude(predicted_dx, predicted_dy),
@@ -279,6 +311,7 @@ def collect_interval_metrics(rows):
                     and interval.get("placement_reports_delivered", 0) == 0
                     and interval.get("transmit_failures", 0) == 0
                     and interval.get("screen_changes_predicted", 0) == 0
+                    and not likely_host_edge_clamped(row)
                 ),
             }
         )
@@ -468,7 +501,9 @@ def main():
 
     metrics = collect_interval_metrics(rows)
     clean = [metric for metric in metrics if metric["clean"]]
+    edge_clamped = [metric for metric in metrics if metric["host_edge_clamped"]]
     print(f"intervals_total={len(metrics)} clean_for_model={len(clean)}")
+    print(f"intervals_likely_host_edge_clamped={len(edge_clamped)}")
     describe("clean_sent_mag", [metric["sent_mag"] for metric in clean])
     describe("clean_observed_gain", [metric["observed_gain"] for metric in clean])
     describe("clean_model_gain", [metric["model_gain"] for metric in clean])
@@ -499,6 +534,7 @@ def main():
             f"sent=({row['interval']['sent_dx']},{row['interval']['sent_dy']}) "
             f"reports={row['interval']['movement_sent']} "
             f"placements={row['interval']['placement_reports_delivered']} "
+            f"edge_clamped={likely_host_edge_clamped(row)} "
             f"correction=({row['interval']['host_correction_x']:.3f},{row['interval']['host_correction_y']:.3f})"
         )
 
