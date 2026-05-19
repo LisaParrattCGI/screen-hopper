@@ -5,15 +5,24 @@ import IOKit.hid
 import ServiceManagement
 
 private struct FeatureReportMode {
+    let usesZeroIOReportID: Bool
     let writeIncludesReportID: Bool
 
     var description: String {
-        writeIncludesReportID ? "with-report-id" : "without-report-id"
+        let ioReportID = usesZeroIOReportID ? "io-report-id-zero" : "io-report-id-match"
+        let payload = writeIncludesReportID ? "with-report-id-byte" : "without-report-id-byte"
+        return "\(ioReportID)-\(payload)"
+    }
+
+    func ioReportID(_ reportID: CFIndex) -> CFIndex {
+        usesZeroIOReportID ? 0 : reportID
     }
 
     static let candidates = [
-        FeatureReportMode(writeIncludesReportID: true),
-        FeatureReportMode(writeIncludesReportID: false),
+        FeatureReportMode(usesZeroIOReportID: false, writeIncludesReportID: false),
+        FeatureReportMode(usesZeroIOReportID: true, writeIncludesReportID: true),
+        FeatureReportMode(usesZeroIOReportID: false, writeIncludesReportID: true),
+        FeatureReportMode(usesZeroIOReportID: true, writeIncludesReportID: false),
     ]
 }
 
@@ -396,12 +405,13 @@ private final class ScreenHopperDevice {
             guard let pointer = bytes.bindMemory(to: UInt8.self).baseAddress else {
                 return kIOReturnNoMemory
             }
-            return IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature, reportID, pointer, report.count)
+            return IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature, mode.ioReportID(reportID), pointer, report.count)
         }
 
         guard result == kIOReturnSuccess else {
             throw LiveSyncError.hidSetReportFailed(
                 reportID: reportID,
+                ioReportID: mode.ioReportID(reportID),
                 length: report.count,
                 includesReportID: mode.writeIncludesReportID,
                 code: result
@@ -420,6 +430,7 @@ private final class ScreenHopperDevice {
             do {
                 let report = try readFeatureReportBytes(
                     reportID: reportID,
+                    ioReportID: mode.ioReportID(reportID),
                     length: attempt.length,
                     seedReportID: attempt.seedReportID
                 )
@@ -432,7 +443,7 @@ private final class ScreenHopperDevice {
         throw LiveSyncError.featureReadFailed(reportID: reportID, attempts: errors)
     }
 
-    private func readFeatureReportBytes(reportID: CFIndex, length: Int, seedReportID: Bool) throws -> Data {
+    private func readFeatureReportBytes(reportID: CFIndex, ioReportID: CFIndex, length: Int, seedReportID: Bool) throws -> Data {
         var report = Data(repeating: 0, count: length)
         if seedReportID && !report.isEmpty {
             report[0] = UInt8(reportID)
@@ -443,11 +454,11 @@ private final class ScreenHopperDevice {
             guard let pointer = bytes.bindMemory(to: UInt8.self).baseAddress else {
                 return kIOReturnNoMemory
             }
-            return IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, reportID, pointer, &reportLength)
+            return IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, ioReportID, pointer, &reportLength)
         }
 
         guard result == kIOReturnSuccess else {
-            throw LiveSyncError.hidGetReportFailed(reportID: reportID, length: length, code: result)
+            throw LiveSyncError.hidGetReportFailed(reportID: reportID, ioReportID: ioReportID, length: length, code: result)
         }
 
         return report.prefix(reportLength)
@@ -2705,8 +2716,8 @@ private func makeFrogStatusIcon() -> NSImage {
 
 private enum LiveSyncError: Error, CustomStringConvertible, LocalizedError {
     case payloadTooLarge
-    case hidSetReportFailed(reportID: CFIndex, length: Int, includesReportID: Bool, code: IOReturn)
-    case hidGetReportFailed(reportID: CFIndex, length: Int, code: IOReturn)
+    case hidSetReportFailed(reportID: CFIndex, ioReportID: CFIndex, length: Int, includesReportID: Bool, code: IOReturn)
+    case hidGetReportFailed(reportID: CFIndex, ioReportID: CFIndex, length: Int, code: IOReturn)
     case featureReadFailed(reportID: CFIndex, attempts: [String])
     case incompatibleConfigVersion(UInt8)
     case invalidReport(reportID: CFIndex, returnedLength: Int, expectedLength: Int, bytes: String)
@@ -2790,11 +2801,11 @@ private func printJSONLine(_ value: [String: Any]) {
 
 private func briefError(_ error: Error) -> String {
     switch error {
-    case LiveSyncError.hidSetReportFailed(let reportID, let length, let includesReportID, let code):
+    case LiveSyncError.hidSetReportFailed(let reportID, let ioReportID, let length, let includesReportID, let code):
         let framing = includesReportID ? "with report id byte" : "without report id byte"
-        return "set report id \(reportID) length \(length) \(framing) failed \(hex(code))"
-    case LiveSyncError.hidGetReportFailed(let reportID, let length, let code):
-        return "get report id \(reportID) length \(length) failed \(hex(code))"
+        return "set report id \(reportID) io report id \(ioReportID) length \(length) \(framing) failed \(hex(code))"
+    case LiveSyncError.hidGetReportFailed(let reportID, let ioReportID, let length, let code):
+        return "get report id \(reportID) io report id \(ioReportID) length \(length) failed \(hex(code))"
     case LiveSyncError.featureReadFailed(let reportID, let attempts):
         return "read feature report id \(reportID) failed: \(attempts.joined(separator: "; "))"
     case LiveSyncError.incompatibleConfigVersion(let version):
