@@ -2148,24 +2148,10 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
     private let deviceXLabel = NSTextField(labelWithString: "-")
     private let deviceYLabel = NSTextField(labelWithString: "-")
     private let deviceScreenLabel = NSTextField(labelWithString: "-")
-    private let placementLabel = NSTextField(labelWithString: "-")
-    private let localTrackingSpeedLabel = NSTextField(labelWithString: "-")
-    private let deviceTrackingSpeedLabel = NSTextField(labelWithString: "-")
-    private let localPointerResolutionLabel = NSTextField(labelWithString: "-")
-    private let devicePointerResolutionLabel = NSTextField(labelWithString: "-")
-    private let localFrameRateLabel = NSTextField(labelWithString: "-")
-    private let deviceFrameRateLabel = NSTextField(labelWithString: "-")
-    private let localFixedMultiplierLabel = NSTextField(labelWithString: "-")
-    private let deviceFixedMultiplierLabel = NSTextField(labelWithString: "-")
-    private let localPlacementToleranceLabel = NSTextField(labelWithString: "-")
-    private let devicePlacementToleranceLabel = NSTextField(labelWithString: "-")
-    private let localReportRateLabel = NSTextField(labelWithString: "-")
-    private let deviceReportRateLabel = NSTextField(labelWithString: "-")
     private let hostCorrectionLabel = NSTextField(labelWithString: "-")
     private let lastHostCursorLabel = NSTextField(labelWithString: "-")
     private let rawMovementLabel = NSTextField(labelWithString: "-")
-    private let predictedMovementLabel = NSTextField(labelWithString: "-")
-    private let accelerationTimingLabel = NSTextField(labelWithString: "-")
+    private let sentMovementLabel = NSTextField(labelWithString: "-")
     private let movementReportCountLabel = NSTextField(labelWithString: "-")
     private let hostReportCountLabel = NSTextField(labelWithString: "-")
     private let queueLabel = NSTextField(labelWithString: "-")
@@ -2195,21 +2181,18 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         hostXLabel.stringValue = coordinateString(host.x)
         hostYLabel.stringValue = coordinateString(host.y)
         hostScreenLabel.stringValue = screenString(host.activeScreen)
-        updateMouseLabels(local: localMouse, device: device?.mouse)
         updateDiagnosticLabels(diagnostics)
 
         if let device {
             deviceXLabel.stringValue = coordinateString(device.cursor.x)
             deviceYLabel.stringValue = coordinateString(device.cursor.y)
             deviceScreenLabel.stringValue = screenString(device.cursor.activeScreen)
-            placementLabel.stringValue = placementString(device)
             statusLabel.stringValue = "Runtime status live"
             statusLabel.textColor = .secondaryLabelColor
         } else {
             deviceXLabel.stringValue = "-"
             deviceYLabel.stringValue = "-"
             deviceScreenLabel.stringValue = "-"
-            placementLabel.stringValue = "-"
             statusLabel.stringValue = error ?? "Screen Hopper disconnected"
             statusLabel.textColor = .systemRed
         }
@@ -2240,17 +2223,16 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
             ("X", deviceXLabel),
             ("Y", deviceYLabel),
             ("Active screen", deviceScreenLabel),
-            ("Placement", placementLabel),
         ]))
-        root.addArrangedSubview(mouseModelSection())
-        root.addArrangedSubview(debugSection(title: "Prediction Diagnostics", rows: [
+        root.addArrangedSubview(debugSection(title: "Cursor Report Diagnostics", rows: [
             ("Last host cursor", lastHostCursorLabel),
-            ("Host correction", hostCorrectionLabel),
-            ("Last raw movement", rawMovementLabel),
-            ("Last predicted movement", predictedMovementLabel),
-            ("Acceleration timing", accelerationTimingLabel),
-            ("Movement reports", movementReportCountLabel),
+            ("Host adjustment", hostCorrectionLabel),
             ("Host reports", hostReportCountLabel),
+        ]))
+        root.addArrangedSubview(debugSection(title: "Movement And Queue Diagnostics", rows: [
+            ("Last raw movement", rawMovementLabel),
+            ("Last sent movement", sentMovementLabel),
+            ("Movement reports", movementReportCountLabel),
             ("Queue depth", queueLabel),
             ("Last sent report", lastReportLabel),
         ]))
@@ -2303,122 +2285,13 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         return row
     }
 
-    private func mouseModelSection() -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.spacing = 8
-
-        let titleLabel = NSTextField(labelWithString: "Mouse Acceleration Model")
-        titleLabel.font = NSFont.systemFont(ofSize: 14, weight: .semibold)
-        stack.addArrangedSubview(titleLabel)
-
-        stack.addArrangedSubview(mouseHeaderRow())
-        stack.addArrangedSubview(mouseModelRow("Tracking speed", localTrackingSpeedLabel, deviceTrackingSpeedLabel))
-        stack.addArrangedSubview(mouseModelRow("Pointer resolution", localPointerResolutionLabel, devicePointerResolutionLabel))
-        stack.addArrangedSubview(mouseModelRow("Frame rate", localFrameRateLabel, deviceFrameRateLabel))
-        stack.addArrangedSubview(mouseModelRow("Fixed multiplier", localFixedMultiplierLabel, deviceFixedMultiplierLabel))
-        stack.addArrangedSubview(mouseModelRow("Placement tolerance", localPlacementToleranceLabel, devicePlacementToleranceLabel))
-        stack.addArrangedSubview(mouseModelRow("Report rate", localReportRateLabel, deviceReportRateLabel))
-        return stack
-    }
-
-    private func mouseHeaderRow() -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 12
-
-        let spacer = NSTextField(labelWithString: "")
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.widthAnchor.constraint(equalToConstant: 150).isActive = true
-
-        let local = mouseHeaderLabel("Local Mac")
-        let hopper = mouseHeaderLabel("Screen Hopper")
-
-        row.addArrangedSubview(spacer)
-        row.addArrangedSubview(local)
-        row.addArrangedSubview(hopper)
-        return row
-    }
-
-    private func mouseModelRow(_ name: String, _ localLabel: NSTextField, _ deviceLabel: NSTextField) -> NSView {
-        let row = NSStackView()
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 12
-
-        let nameLabel = NSTextField(labelWithString: name)
-        nameLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
-        nameLabel.textColor = .secondaryLabelColor
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.widthAnchor.constraint(equalToConstant: 150).isActive = true
-
-        styleMouseValueLabel(localLabel)
-        styleMouseValueLabel(deviceLabel)
-
-        row.addArrangedSubview(nameLabel)
-        row.addArrangedSubview(localLabel)
-        row.addArrangedSubview(deviceLabel)
-        return row
-    }
-
-    private func mouseHeaderLabel(_ text: String) -> NSTextField {
-        let label = NSTextField(labelWithString: text)
-        label.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
-        label.textColor = .secondaryLabelColor
-        label.alignment = .right
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.widthAnchor.constraint(equalToConstant: 130).isActive = true
-        return label
-    }
-
-    private func styleMouseValueLabel(_ label: NSTextField) {
-        label.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
-        label.alignment = .right
-        label.translatesAutoresizingMaskIntoConstraints = false
-        if label.constraints.first(where: { $0.firstAttribute == .width }) == nil {
-            label.widthAnchor.constraint(equalToConstant: 130).isActive = true
-        }
-    }
-
-    private func updateMouseLabels(local: MouseConfig, device: MouseConfig?) {
-        localTrackingSpeedLabel.stringValue = mouseValueString(local.trackingSpeed)
-        localPointerResolutionLabel.stringValue = mouseValueString(local.pointerResolution)
-        localFrameRateLabel.stringValue = mouseValueString(local.frameRate)
-        localFixedMultiplierLabel.stringValue = mouseValueString(local.fixedMultiplier)
-        localPlacementToleranceLabel.stringValue = mouseValueString(local.placementTolerance)
-        localReportRateLabel.stringValue = mouseValueString(local.reportRate)
-
-        guard let device else {
-            for label in [
-                deviceTrackingSpeedLabel,
-                devicePointerResolutionLabel,
-                deviceFrameRateLabel,
-                deviceFixedMultiplierLabel,
-                devicePlacementToleranceLabel,
-                deviceReportRateLabel,
-            ] {
-                label.stringValue = "-"
-            }
-            return
-        }
-
-        deviceTrackingSpeedLabel.stringValue = mouseValueString(device.trackingSpeed)
-        devicePointerResolutionLabel.stringValue = mouseValueString(device.pointerResolution)
-        deviceFrameRateLabel.stringValue = mouseValueString(device.frameRate)
-        deviceFixedMultiplierLabel.stringValue = mouseValueString(device.fixedMultiplier)
-        devicePlacementToleranceLabel.stringValue = mouseValueString(device.placementTolerance)
-        deviceReportRateLabel.stringValue = mouseValueString(device.reportRate)
-    }
-
     private func updateDiagnosticLabels(_ diagnostics: RuntimeDiagnostics?) {
         guard let diagnostics else {
             for label in [
                 lastHostCursorLabel,
                 hostCorrectionLabel,
                 rawMovementLabel,
-                predictedMovementLabel,
-                accelerationTimingLabel,
+                sentMovementLabel,
                 movementReportCountLabel,
                 hostReportCountLabel,
                 queueLabel,
@@ -2432,8 +2305,7 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         lastHostCursorLabel.stringValue = "\(coordinateString(diagnostics.lastHostCursor.x)), \(coordinateString(diagnostics.lastHostCursor.y)) / \(screenString(diagnostics.lastHostCursor.activeScreen))"
         hostCorrectionLabel.stringValue = "\(diagnosticCoordString(diagnostics.lastHostCorrectionX)), \(diagnosticCoordString(diagnostics.lastHostCorrectionY))"
         rawMovementLabel.stringValue = "\(diagnostics.lastRawDX), \(diagnostics.lastRawDY)"
-        predictedMovementLabel.stringValue = "\(diagnosticCoordString(diagnostics.lastPredictedDX)), \(diagnosticCoordString(diagnostics.lastPredictedDY))"
-        accelerationTimingLabel.stringValue = "\(diagnostics.lastAccelerationDeltaUS) us, rate x\(decimalString(diagnostics.lastAccelerationRateMultiplier)), v \(decimalString(diagnostics.lastAccelerationVelocity)) -> \(decimalString(diagnostics.lastAccelerationAdjustedVelocity))"
+        sentMovementLabel.stringValue = "\(diagnostics.lastSentDX), \(diagnostics.lastSentDY)"
         movementReportCountLabel.stringValue = "\(diagnostics.movementReportsQueued) queued / \(diagnostics.movementReportsSent) sent"
         hostReportCountLabel.stringValue = "\(diagnostics.hostReportsAccepted) accepted / \(diagnostics.hostReportsIgnored) ignored (\(ignoreReasonString(diagnostics.lastHostIgnoreReason)))"
         queueLabel.stringValue = "\(diagnostics.outgoingQueueDepth)"
@@ -2448,22 +2320,8 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         decimalString(Double(value) / screenCoordinateScale)
     }
 
-    private func mouseValueString(_ value: Double) -> String {
-        decimalString(value)
-    }
-
     private func screenString(_ screen: Int8) -> String {
         screen >= 0 ? "\(screen)" : "unknown"
-    }
-
-    private func placementString(_ status: RuntimeStatus) -> String {
-        if status.placementActive {
-            return "active"
-        }
-        if status.placementAnchorPending {
-            return "anchor pending"
-        }
-        return "idle"
     }
 
     private func ignoreReasonString(_ reason: UInt8) -> String {
@@ -2475,9 +2333,9 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         case 2:
             return "screen out of range"
         case 3:
-            return "inactive screen"
+            return "legacy inactive screen"
         case 4:
-            return "placement active"
+            return "legacy placement active"
         default:
             return "reason \(reason)"
         }
@@ -2506,7 +2364,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private var previousDebugHostCursor: RuntimeCursor?
     private var previousDebugDiagnostics: RuntimeDiagnostics?
     private let reactiveCursorReportMinInterval: TimeInterval = 0.01
-    private let debugLogVersion = 8
+    private let debugLogVersion = 9
     private let debugLogDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -2788,9 +2646,6 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
                 "display_height": debugCoordinateValue(host.displayHeight),
                 "reported_screen": debugScreenValue(host.activeScreen),
             ],
-            "mouse": [
-                "local": debugMouseConfig(localMouse),
-            ],
         ]
 
         if let data = try? JSONSerialization.data(withJSONObject: sample, options: [.sortedKeys]),
@@ -2823,12 +2678,6 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
                 "x": debugCoordinateValue(status.cursor.x),
                 "y": debugCoordinateValue(status.cursor.y),
                 "active_screen": debugScreenValue(status.cursor.activeScreen),
-                "placement_active": status.placementActive,
-                "placement_anchor_pending": status.placementAnchorPending,
-            ],
-            "mouse": [
-                "local": debugMouseConfig(localMouse),
-                "hopper": debugMouseConfig(status.mouse),
             ],
         ]
 
@@ -2876,18 +2725,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
                 "raw_dy": Int(diagnostics.lastRawDY),
                 "sent_dx": Int(diagnostics.lastSentDX),
                 "sent_dy": Int(diagnostics.lastSentDY),
-                "predicted_dx": debugDeltaValue(diagnostics.lastPredictedDX),
-                "predicted_dy": debugDeltaValue(diagnostics.lastPredictedDY),
                 "last_target_screen": Int(diagnostics.lastReportTargetScreen),
                 "last_report_id": Int(diagnostics.lastReportID),
-                "last_prediction_applied": diagnostics.lastPredictionApplied,
-                "last_cursor_placement_report": diagnostics.lastCursorPlacementReport,
-            ],
-            "acceleration": [
-                "delta_us": Int(diagnostics.lastAccelerationDeltaUS),
-                "rate_multiplier": diagnostics.lastAccelerationRateMultiplier,
-                "velocity": diagnostics.lastAccelerationVelocity,
-                "adjusted_velocity": diagnostics.lastAccelerationAdjustedVelocity,
             ],
             "queue": [
                 "depth": Int(diagnostics.outgoingQueueDepth),
@@ -2899,20 +2738,12 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
                 "raw_dy": diagnostics.totalRawDY,
                 "sent_dx": diagnostics.totalSentDX,
                 "sent_dy": diagnostics.totalSentDY,
-                "predicted_dx": debugCoordinateValue(diagnostics.totalPredictedDX),
-                "predicted_dy": debugCoordinateValue(diagnostics.totalPredictedDY),
                 "host_correction_x": debugCoordinateValue(diagnostics.totalHostCorrectionX),
                 "host_correction_y": debugCoordinateValue(diagnostics.totalHostCorrectionY),
-                "prediction_reports_applied": Int(diagnostics.predictionReportsApplied),
-                "placement_reports_delivered": Int(diagnostics.placementReportsDelivered),
                 "transmit_failures": Int(diagnostics.transmitFailures),
-                "screen_changes_predicted": Int(diagnostics.screenChangesPredicted),
+                "screen_changes": Int(diagnostics.screenChangesPredicted),
             ],
             "interval": interval,
-            "mouse": [
-                "local": debugMouseConfig(localMouse),
-                "hopper": debugMouseConfig(status.mouse),
-            ],
         ]
 
         if let data = try? JSONSerialization.data(withJSONObject: sample, options: [.sortedKeys]),
@@ -2929,18 +2760,14 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
                 "raw_dy": 0,
                 "sent_dx": 0,
                 "sent_dy": 0,
-                "predicted_dx": 0.0,
-                "predicted_dy": 0.0,
                 "host_correction_x": 0.0,
                 "host_correction_y": 0.0,
                 "movement_queued": 0,
                 "movement_sent": 0,
-                "prediction_reports_applied": 0,
-                "placement_reports_delivered": 0,
                 "host_reports_accepted": 0,
                 "host_reports_ignored": 0,
                 "transmit_failures": 0,
-                "screen_changes_predicted": 0,
+                "screen_changes": 0,
             ]
         }
 
@@ -2949,18 +2776,14 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             "raw_dy": current.totalRawDY - previous.totalRawDY,
             "sent_dx": current.totalSentDX - previous.totalSentDX,
             "sent_dy": current.totalSentDY - previous.totalSentDY,
-            "predicted_dx": debugCoordinateValue(current.totalPredictedDX - previous.totalPredictedDX),
-            "predicted_dy": debugCoordinateValue(current.totalPredictedDY - previous.totalPredictedDY),
             "host_correction_x": debugCoordinateValue(current.totalHostCorrectionX - previous.totalHostCorrectionX),
             "host_correction_y": debugCoordinateValue(current.totalHostCorrectionY - previous.totalHostCorrectionY),
             "movement_queued": debugDelta(current.movementReportsQueued, previous.movementReportsQueued),
             "movement_sent": debugDelta(current.movementReportsSent, previous.movementReportsSent),
-            "prediction_reports_applied": debugDelta(current.predictionReportsApplied, previous.predictionReportsApplied),
-            "placement_reports_delivered": debugDelta(current.placementReportsDelivered, previous.placementReportsDelivered),
             "host_reports_accepted": debugDelta(current.hostReportsAccepted, previous.hostReportsAccepted),
             "host_reports_ignored": debugDelta(current.hostReportsIgnored, previous.hostReportsIgnored),
             "transmit_failures": debugDelta(current.transmitFailures, previous.transmitFailures),
-            "screen_changes_predicted": debugDelta(current.screenChangesPredicted, previous.screenChangesPredicted),
+            "screen_changes": debugDelta(current.screenChangesPredicted, previous.screenChangesPredicted),
         ]
     }
 
@@ -2984,17 +2807,6 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         screen >= 0 ? Int(screen) : NSNull()
     }
 
-    private func debugMouseConfig(_ mouse: MouseConfig) -> [String: Double] {
-        [
-            "tracking": mouse.trackingSpeed,
-            "resolution": mouse.pointerResolution,
-            "frame_rate": mouse.frameRate,
-            "fixed_multiplier": mouse.fixedMultiplier,
-            "placement_tolerance": mouse.placementTolerance,
-            "report_rate": mouse.reportRate,
-        ]
-    }
-
     private func debugCoordinateString(_ value: Int64) -> String {
         decimalString(Double(value) / screenCoordinateScale)
     }
@@ -3016,9 +2828,9 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         case 2:
             return "screen-out-of-range"
         case 3:
-            return "inactive-screen"
+            return "legacy-inactive-screen"
         case 4:
-            return "placement-active"
+            return "legacy-placement-active"
         default:
             return "reason-\(reason)"
         }
