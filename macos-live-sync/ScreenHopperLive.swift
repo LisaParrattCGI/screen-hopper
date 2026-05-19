@@ -430,6 +430,7 @@ private final class ScreenHopperDevice {
 private final class DeviceLocator {
     private let manager: IOHIDManager
     private var lastProbeError: String?
+    private var lastDescriptorSummary: String = ""
 
     init() {
         manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -443,23 +444,31 @@ private final class DeviceLocator {
     }
 
     var disconnectedMessage: String {
-        lastProbeError ?? "Screen Hopper: disconnected"
+        let message = lastProbeError ?? "Screen Hopper: disconnected"
+        guard !lastDescriptorSummary.isEmpty else {
+            return message
+        }
+        return "\(message)\n\n\(lastDescriptorSummary)"
     }
 
     func findRuntimeDevice() -> ScreenHopperDevice? {
         lastProbeError = nil
+        lastDescriptorSummary = ""
 
         guard let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else {
             lastProbeError = "Screen Hopper: no matching HID devices"
             return nil
         }
 
+        let sortedDevices = devices.sorted { deviceSummary($0) < deviceSummary($1) }
+        lastDescriptorSummary = descriptorSummary(sortedDevices)
+
         if devices.isEmpty {
             lastProbeError = "Screen Hopper: no matching HID devices"
             return nil
         }
 
-        for device in devices {
+        for device in sortedDevices {
             guard isRuntimeCollection(device) else {
                 continue
             }
@@ -513,6 +522,45 @@ private final class DeviceLocator {
         return product
     }
 
+    func printDescriptorSummaryForDebug() {
+        guard let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else {
+            print("screen_hopper_hid_collections: unavailable")
+            fflush(stdout)
+            return
+        }
+
+        print(descriptorSummary(devices.sorted { deviceSummary($0) < deviceSummary($1) }))
+        fflush(stdout)
+    }
+
+    private func descriptorSummary(_ devices: [IOHIDDevice]) -> String {
+        if devices.isEmpty {
+            return "screen_hopper_hid_collections: none"
+        }
+
+        var lines = ["screen_hopper_hid_collections:"]
+        for (index, device) in devices.enumerated() {
+            lines.append(
+                [
+                    "  [\(index)]",
+                    "product=\(stringProperty(device, kIOHIDProductKey as CFString) ?? "unknown")",
+                    "manufacturer=\(stringProperty(device, kIOHIDManufacturerKey as CFString) ?? "unknown")",
+                    "transport=\(stringProperty(device, kIOHIDTransportKey as CFString) ?? "unknown")",
+                    "vendor=\(hex(intProperty(device, kIOHIDVendorIDKey as CFString)))",
+                    "product_id=\(hex(intProperty(device, kIOHIDProductIDKey as CFString)))",
+                    "location=\(hex(intProperty(device, kIOHIDLocationIDKey as CFString)))",
+                    "usage_page=\(hex(intProperty(device, kIOHIDPrimaryUsagePageKey as CFString)))",
+                    "usage=\(hex(intProperty(device, kIOHIDPrimaryUsageKey as CFString)))",
+                    "max_input=\(intString(device, kIOHIDMaxInputReportSizeKey as CFString))",
+                    "max_output=\(intString(device, kIOHIDMaxOutputReportSizeKey as CFString))",
+                    "max_feature=\(intString(device, "MaxFeatureReportSize" as CFString))",
+                    "runtime_candidate=\(isRuntimeCollection(device) ? "yes" : "no")",
+                ].joined(separator: " ")
+            )
+        }
+        return lines.joined(separator: "\n")
+    }
+
     private func isRuntimeCollection(_ device: IOHIDDevice) -> Bool {
         intProperty(device, kIOHIDPrimaryUsagePageKey as CFString) == runtimeUsagePage &&
             intProperty(device, kIOHIDPrimaryUsageKey as CFString) == runtimeUsage
@@ -526,6 +574,14 @@ private final class DeviceLocator {
             return number.intValue
         }
         return nil
+    }
+
+    private func stringProperty(_ device: IOHIDDevice, _ key: CFString) -> String? {
+        IOHIDDeviceGetProperty(device, key) as? String
+    }
+
+    private func intString(_ device: IOHIDDevice, _ key: CFString) -> String {
+        intProperty(device, key).map(String.init) ?? "unknown"
     }
 }
 
@@ -1909,6 +1965,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         previousDebugDiagnostics = nil
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+        locator.printDescriptorSummaryForDebug()
         startDebugTimer()
         debugTick()
     }
@@ -2279,12 +2336,19 @@ private func hex(_ value: IOReturn) -> String {
     String(format: "0x%08X", UInt32(bitPattern: value))
 }
 
+private func hex(_ value: Int?) -> String {
+    guard let value else {
+        return "unknown"
+    }
+    return String(format: "0x%X", value)
+}
+
 private func briefError(_ error: Error) -> String {
     switch error {
     case LiveSyncError.hidSetReportFailed(let code):
-        return "set report failed \(hex(code))"
+        return "set report failed \(hex(code)) (\(code))"
     case LiveSyncError.hidGetReportFailed(let code):
-        return "get report failed \(hex(code))"
+        return "get report failed \(hex(code)) (\(code))"
     case LiveSyncError.incompatibleConfigVersion(let version):
         return "config version \(version) unsupported"
     case LiveSyncError.invalidReport:
