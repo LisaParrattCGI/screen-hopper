@@ -410,8 +410,33 @@ private final class ScreenHopperDevice {
     }
 
     private func readFeatureReport(reportID: CFIndex, size: Int) throws -> Data {
-        let length = size + 1
+        let attempts = [
+            (name: "id-prefixed-buffer", length: size + 1, seedReportID: true),
+            (name: "body-only-buffer", length: size, seedReportID: false),
+        ]
+        var errors: [String] = []
+
+        for attempt in attempts {
+            do {
+                let report = try readFeatureReportBytes(
+                    reportID: reportID,
+                    length: attempt.length,
+                    seedReportID: attempt.seedReportID
+                )
+                return try parseFeatureReport(report, reportID: reportID, size: size)
+            } catch {
+                errors.append("\(attempt.name): \(briefError(error))")
+            }
+        }
+
+        throw LiveSyncError.featureReadFailed(reportID: reportID, attempts: errors)
+    }
+
+    private func readFeatureReportBytes(reportID: CFIndex, length: Int, seedReportID: Bool) throws -> Data {
         var report = Data(repeating: 0, count: length)
+        if seedReportID && !report.isEmpty {
+            report[0] = UInt8(reportID)
+        }
         var reportLength = report.count
 
         let result = report.withUnsafeMutableBytes { bytes -> IOReturn in
@@ -425,20 +450,35 @@ private final class ScreenHopperDevice {
             throw LiveSyncError.hidGetReportFailed(reportID: reportID, length: length, code: result)
         }
 
-        report = report.prefix(reportLength)
+        return report.prefix(reportLength)
+    }
+
+    private func parseFeatureReport(_ report: Data, reportID: CFIndex, size: Int) throws -> Data {
         let body: Data
         if report.count >= size + 1 && report.first == UInt8(reportID) {
             body = Data(report.dropFirst().prefix(size))
         } else if report.count >= size {
             body = Data(report.prefix(size))
         } else {
-            throw LiveSyncError.invalidReport
+            throw LiveSyncError.invalidReport(
+                reportID: reportID,
+                returnedLength: report.count,
+                expectedLength: size,
+                prefix: hexPrefix(report)
+            )
         }
 
         let payload = body.prefix(size - 4)
         let expected = body.readUInt32LE(at: size - 4)
-        guard CRC32.compute(payload) == expected else {
-            throw LiveSyncError.invalidCRC
+        let actual = CRC32.compute(payload)
+        guard actual == expected else {
+            throw LiveSyncError.invalidCRC(
+                reportID: reportID,
+                returnedLength: report.count,
+                expected: expected,
+                actual: actual,
+                prefix: hexPrefix(report)
+            )
         }
 
         return payload
@@ -2667,9 +2707,10 @@ private enum LiveSyncError: Error, CustomStringConvertible, LocalizedError {
     case payloadTooLarge
     case hidSetReportFailed(reportID: CFIndex, length: Int, includesReportID: Bool, code: IOReturn)
     case hidGetReportFailed(reportID: CFIndex, length: Int, code: IOReturn)
+    case featureReadFailed(reportID: CFIndex, attempts: [String])
     case incompatibleConfigVersion(UInt8)
-    case invalidReport
-    case invalidCRC
+    case invalidReport(reportID: CFIndex, returnedLength: Int, expectedLength: Int, prefix: String)
+    case invalidCRC(reportID: CFIndex, returnedLength: Int, expected: UInt32, actual: UInt32, prefix: String)
 
     var description: String {
         briefError(self)
@@ -2732,6 +2773,14 @@ private func hex(_ value: Int?) -> String {
     return String(format: "0x%X", value)
 }
 
+private func hex(_ value: UInt32) -> String {
+    String(format: "0x%08X", value)
+}
+
+private func hexPrefix(_ data: Data, byteCount: Int = 16) -> String {
+    data.prefix(byteCount).map { String(format: "%02X", $0) }.joined(separator: " ")
+}
+
 private func printJSONLine(_ value: [String: Any]) {
     if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
        let line = String(data: data, encoding: .utf8) {
@@ -2746,12 +2795,14 @@ private func briefError(_ error: Error) -> String {
         return "set report id \(reportID) length \(length) \(framing) failed \(hex(code))"
     case LiveSyncError.hidGetReportFailed(let reportID, let length, let code):
         return "get report id \(reportID) length \(length) failed \(hex(code))"
+    case LiveSyncError.featureReadFailed(let reportID, let attempts):
+        return "read feature report id \(reportID) failed: \(attempts.joined(separator: "; "))"
     case LiveSyncError.incompatibleConfigVersion(let version):
         return "config version \(version) unsupported"
-    case LiveSyncError.invalidReport:
-        return "invalid runtime report"
-    case LiveSyncError.invalidCRC:
-        return "runtime report CRC failed"
+    case LiveSyncError.invalidReport(let reportID, let returnedLength, let expectedLength, let prefix):
+        return "invalid feature report id \(reportID): returned length \(returnedLength), expected \(expectedLength), prefix [\(prefix)]"
+    case LiveSyncError.invalidCRC(let reportID, let returnedLength, let expected, let actual, let prefix):
+        return "feature report id \(reportID) CRC failed: returned length \(returnedLength), expected \(hex(expected)), actual \(hex(actual)), prefix [\(prefix)]"
     case LiveSyncError.payloadTooLarge:
         return "runtime payload too large"
     default:
