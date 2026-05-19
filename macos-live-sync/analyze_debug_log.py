@@ -21,6 +21,53 @@ MACOS_ACCEL_CURVES = [
     (163840, 64881, 108790, 21627, 0, 583270, 786432),
     (196608, 65536, 123208, 26214, 0, 589824, 786432),
 ]
+SUPPORTED_LOG_VERSIONS = {3, 4}
+
+
+def has_path(row, path):
+    value = row
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            return False
+        value = value[key]
+    return True
+
+
+def is_analysis_row(row):
+    if not isinstance(row, dict):
+        return False
+
+    event = row.get("event")
+    if event is not None and event != "debug_sample":
+        return False
+
+    required_paths = [
+        ("version",),
+        ("timestamp",),
+        ("host", "delta_x"),
+        ("host", "delta_y"),
+        ("diagnostics", "host_correction_x"),
+        ("diagnostics", "host_correction_y"),
+        ("interval", "predicted_dx"),
+        ("interval", "predicted_dy"),
+        ("interval", "sent_dx"),
+        ("interval", "sent_dy"),
+        ("interval", "host_correction_x"),
+        ("interval", "host_correction_y"),
+        ("interval", "movement_sent"),
+        ("interval", "prediction_reports_applied"),
+        ("interval", "placement_reports_delivered"),
+        ("interval", "transmit_failures"),
+        ("interval", "screen_changes_predicted"),
+        ("mouse", "hopper"),
+        ("queue", "depth"),
+        ("queue", "movement_sent"),
+        ("totals", "prediction_reports_applied"),
+        ("totals", "placement_reports_delivered"),
+        ("totals", "transmit_failures"),
+        ("totals", "screen_changes_predicted"),
+    ]
+    return all(has_path(row, path) for path in required_paths)
 
 
 def percentile(values, fraction):
@@ -332,16 +379,38 @@ def main():
         raise SystemExit(f"usage: {Path(sys.argv[0]).name} LOG.jsonl")
 
     rows = []
+    json_rows = 0
+    skipped_events = {}
+    skipped_malformed = 0
     errors = []
     for line_number, line in enumerate(Path(sys.argv[1]).read_text(errors="replace").splitlines(), 1):
         if not line.strip():
             continue
         try:
-            rows.append(json.loads(line))
+            row = json.loads(line)
+            json_rows += 1
         except json.JSONDecodeError as error:
             errors.append((line_number, str(error)))
+            continue
 
-    print(f"rows={len(rows)} parse_errors={len(errors)}")
+        if is_analysis_row(row):
+            rows.append(row)
+        else:
+            if isinstance(row, dict):
+                event = row.get("event")
+                if event is None:
+                    event = "non_analysis_json"
+                skipped_events[event] = skipped_events.get(event, 0) + 1
+            else:
+                skipped_malformed += 1
+
+    skipped_rows = json_rows - len(rows)
+    print(f"json_rows={json_rows} analysis_rows={len(rows)} skipped_rows={skipped_rows} parse_errors={len(errors)}")
+    if skipped_events:
+        skipped_summary = ", ".join(f"{event}={count}" for event, count in sorted(skipped_events.items()))
+        print(f"skipped_events: {skipped_summary}")
+    if skipped_malformed:
+        print(f"skipped_malformed_json_values={skipped_malformed}")
     if errors:
         for line_number, error in errors[:5]:
             print(f"parse_error line={line_number}: {error}")
@@ -352,8 +421,9 @@ def main():
     versions = sorted({row.get("version") for row in rows})
     print(f"versions={versions}")
 
-    if versions != [3]:
-        print("warning: this analyzer expects version 3 interval diagnostics")
+    unsupported_versions = [version for version in versions if version not in SUPPORTED_LOG_VERSIONS]
+    if unsupported_versions:
+        print(f"warning: this analyzer expects interval diagnostics versions {sorted(SUPPORTED_LOG_VERSIONS)}")
 
     corrections = [
         magnitude(row["diagnostics"]["host_correction_x"], row["diagnostics"]["host_correction_y"])

@@ -2502,6 +2502,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
 
         let sample: [String: Any] = [
             "version": debugLogVersion,
+            "event": "debug_sample",
             "timestamp": debugLogDateFormatter.string(from: Date()),
             "host": [
                 "x": debugCoordinateValue(host.x),
