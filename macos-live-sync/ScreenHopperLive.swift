@@ -460,6 +460,10 @@ private final class DeviceLocator {
         }
 
         for device in devices {
+            guard isRuntimeCollection(device) else {
+                continue
+            }
+
             if let maxFeatureSize = intProperty(device, "MaxFeatureReportSize" as CFString),
                maxFeatureSize > 0,
                maxFeatureSize < runtimeSize {
@@ -507,6 +511,11 @@ private final class DeviceLocator {
             return "\(product) usage \(usagePage):\(usage)"
         }
         return product
+    }
+
+    private func isRuntimeCollection(_ device: IOHIDDevice) -> Bool {
+        intProperty(device, kIOHIDPrimaryUsagePageKey as CFString) == runtimeUsagePage &&
+            intProperty(device, kIOHIDPrimaryUsageKey as CFString) == runtimeUsage
     }
 
     private func intProperty(_ device: IOHIDDevice, _ key: CFString) -> Int? {
