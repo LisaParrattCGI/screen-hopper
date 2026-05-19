@@ -15,6 +15,7 @@
 bool led_state = false;
 bool forwarder_active = false;
 RuntimeCommand last_runtime_command = RuntimeCommand::GET_STATUS;
+uint8_t requested_runtime_page = 0;
 runtime_diagnostics_t runtime_diagnostics = {};
 
 bool runtime_report_ok(const uint8_t* buffer, uint16_t bufsize) {
@@ -43,6 +44,25 @@ void send_forwarder_mouse_config_report(const macos_mouse_config_t& mouse_config
         .mouse_config = mouse_config,
     };
     serial_write((const uint8_t*) &msg, sizeof(msg), FORWARDER_UART);
+}
+
+void fill_runtime_diagnostics_page(runtime_diagnostics_page_t* page) {
+    memset(page, 0, sizeof(runtime_diagnostics_page_t));
+
+    const uint8_t* diagnostics_bytes = (const uint8_t*) &runtime_diagnostics;
+    const uint16_t total_size = sizeof(runtime_diagnostics_t);
+    const uint8_t page_count = (total_size + RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE - 1) / RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE;
+    const uint8_t page_index = requested_runtime_page < page_count ? requested_runtime_page : 0;
+    const uint16_t offset = page_index * RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE;
+    uint16_t copy_len = total_size - offset;
+    if (copy_len > RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE) {
+        copy_len = RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE;
+    }
+
+    page->page = page_index;
+    page->page_count = page_count;
+    page->total_size = total_size;
+    memcpy(page->data, diagnostics_bytes + offset, copy_len);
 }
 
 bool handle_control_packet(const uint8_t* data, uint16_t len) {
@@ -117,6 +137,9 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
             last_runtime_command = RuntimeCommand::GET_STATUS;
             break;
         }
+        case RuntimeCommand::GET_DIAGNOSTICS:
+            requested_runtime_page = runtime_buffer->data[0];
+            break;
         default:
             break;
     }
@@ -131,8 +154,7 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
     memset(runtime_buffer, 0, sizeof(runtime_get_feature_t));
 
     if (last_runtime_command == RuntimeCommand::GET_DIAGNOSTICS) {
-        runtime_diagnostics_t* diagnostics = (runtime_diagnostics_t*) runtime_buffer;
-        *diagnostics = runtime_diagnostics;
+        fill_runtime_diagnostics_page((runtime_diagnostics_page_t*) runtime_buffer);
     } else {
         runtime_status_t* status = (runtime_status_t*) runtime_buffer;
         status->cursor.active_screen = forwarder_active ? 1 : -1;

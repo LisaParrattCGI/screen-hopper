@@ -23,6 +23,7 @@ const uint8_t* FLASH_CONFIG_IN_MEMORY = (((uint8_t*) XIP_BASE) + CONFIG_OFFSET_I
 ConfigCommand last_config_command = ConfigCommand::NO_COMMAND;
 RuntimeCommand last_runtime_command = RuntimeCommand::GET_STATUS;
 uint32_t requested_index = 0;
+uint8_t requested_runtime_page = 0;
 macos_mouse_config_t persistent_mouse_config = {
     .tracking_speed = 45056,
     .pointer_resolution = ADVERTISED_POINTER_RESOLUTION_FIXED,
@@ -115,6 +116,28 @@ void fill_runtime_status(runtime_status_t* status) {
 void fill_runtime_diagnostics(runtime_diagnostics_t* diagnostics) {
     memset(diagnostics, 0, sizeof(runtime_diagnostics_t));
     *diagnostics = get_runtime_diagnostics();
+}
+
+void fill_runtime_diagnostics_page(runtime_diagnostics_page_t* page) {
+    memset(page, 0, sizeof(runtime_diagnostics_page_t));
+
+    runtime_diagnostics_t diagnostics;
+    fill_runtime_diagnostics(&diagnostics);
+
+    const uint8_t* diagnostics_bytes = (const uint8_t*) &diagnostics;
+    const uint16_t total_size = sizeof(runtime_diagnostics_t);
+    const uint8_t page_count = (total_size + RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE - 1) / RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE;
+    const uint8_t page_index = requested_runtime_page < page_count ? requested_runtime_page : 0;
+    const uint16_t offset = page_index * RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE;
+    uint16_t copy_len = total_size - offset;
+    if (copy_len > RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE) {
+        copy_len = RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE;
+    }
+
+    page->page = page_index;
+    page->page_count = page_count;
+    page->total_size = total_size;
+    memcpy(page->data, diagnostics_bytes + offset, copy_len);
 }
 
 void load_config() {
@@ -271,7 +294,7 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
                 fill_mouse_config((macos_mouse_config_t*) runtime_buffer);
                 break;
             case RuntimeCommand::GET_DIAGNOSTICS:
-                fill_runtime_diagnostics((runtime_diagnostics_t*) runtime_buffer);
+                fill_runtime_diagnostics_page((runtime_diagnostics_page_t*) runtime_buffer);
                 break;
             case RuntimeCommand::GET_STATUS:
             default:
@@ -379,7 +402,10 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                     break;
                 }
                 case RuntimeCommand::GET_MOUSE_CONFIG:
+                    break;
                 case RuntimeCommand::GET_DIAGNOSTICS:
+                    requested_runtime_page = runtime_buffer->data[0];
+                    break;
                 case RuntimeCommand::GET_STATUS:
                 case RuntimeCommand::NO_COMMAND:
                 default:

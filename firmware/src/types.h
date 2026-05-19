@@ -8,7 +8,7 @@
 
 #define CONFIG_VERSION 7
 #define CONFIG_SIZE 60
-#define RUNTIME_SIZE 160
+#define RUNTIME_SIZE 60
 
 #define REPORT_ID_MOUSE_ABSOLUTE 1
 #define REPORT_ID_KEYBOARD_FIXED 2
@@ -192,6 +192,9 @@ struct __attribute__((packed)) runtime_get_feature_t {
     uint32_t crc32;
 };
 
+#define RUNTIME_GET_PAYLOAD_SIZE (RUNTIME_SIZE - 4)
+#define RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE (RUNTIME_GET_PAYLOAD_SIZE - 4)
+
 struct __attribute__((packed)) runtime_cursor_t {
     int64_t x;
     int64_t y;
@@ -203,6 +206,17 @@ struct __attribute__((packed)) runtime_status_t {
     uint8_t placement_active;
     uint8_t placement_anchor_pending;
     macos_mouse_config_t mouse_config;
+};
+
+struct __attribute__((packed)) runtime_diagnostics_page_request_t {
+    uint8_t page;
+};
+
+struct __attribute__((packed)) runtime_diagnostics_page_t {
+    uint8_t page;
+    uint8_t page_count;
+    uint16_t total_size;
+    uint8_t data[RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE];
 };
 
 struct __attribute__((packed)) runtime_diagnostics_t {
@@ -238,5 +252,8 @@ struct __attribute__((packed)) runtime_diagnostics_t {
     int64_t total_host_correction_x;
     int64_t total_host_correction_y;
 };
+
+static_assert(sizeof(runtime_status_t) <= RUNTIME_GET_PAYLOAD_SIZE, "runtime status must fit in one feature report");
+static_assert(sizeof(runtime_diagnostics_page_t) == RUNTIME_GET_PAYLOAD_SIZE, "runtime diagnostics page must fill one feature report payload");
 
 #endif

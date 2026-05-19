@@ -41,7 +41,7 @@ tusb_desc_device_t const desc_device = {
     // you will have to get real ones.
     .idVendor = SCREEN_HOPPER_VENDOR_ID,
     .idProduct = SCREEN_HOPPER_PRODUCT_ID,
-    .bcdDevice = 0x0103,
+    .bcdDevice = 0x0104,
 
     .iManufacturer = 0x01,
     .iProduct = 0x02,

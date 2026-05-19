@@ -26,6 +26,11 @@ private struct FeatureReportMode {
     ]
 }
 
+private let runtimeFeaturePayloadSize = runtimeSize - 4
+private let runtimeDiagnosticsPageHeaderSize = 4
+private let runtimeDiagnosticsPageDataSize = runtimeFeaturePayloadSize - runtimeDiagnosticsPageHeaderSize
+private let runtimeDiagnosticsDecodedSize = 139
+
 private struct Options {
     var reportedScreenOverride: Int8 = -1
     var pointerResolution: Double = 400.0
@@ -203,8 +208,59 @@ private final class ScreenHopperDevice {
     }
 
     func fetchDiagnostics() throws -> RuntimeDiagnostics {
-        try sendRuntimeCommand(.getDiagnostics)
-        let payload = try readStatusPayload()
+        var diagnosticsData = Data()
+        var page: UInt8 = 0
+        var pageCount: UInt8 = 0
+        var totalSize: Int?
+
+        repeat {
+            var requestPayload = Data()
+            requestPayload.appendUInt8(page)
+            try sendRuntimeCommand(.getDiagnostics, payload: requestPayload)
+
+            let payload = try readStatusPayload()
+            guard payload.count >= runtimeFeaturePayloadSize else {
+                throw LiveSyncError.invalidDiagnosticsPage("page \(page) returned \(payload.count) bytes, expected \(runtimeFeaturePayloadSize)")
+            }
+
+            let returnedPage = payload[0]
+            pageCount = payload[1]
+            let reportedTotalSize = Int(payload.readUInt16LE(at: 2))
+            guard returnedPage == page else {
+                throw LiveSyncError.invalidDiagnosticsPage("requested page \(page), received page \(returnedPage)")
+            }
+            guard pageCount > 0 else {
+                throw LiveSyncError.invalidDiagnosticsPage("device reported zero diagnostics pages")
+            }
+            if let totalSize, totalSize != reportedTotalSize {
+                throw LiveSyncError.invalidDiagnosticsPage("diagnostics total changed from \(totalSize) to \(reportedTotalSize)")
+            }
+            totalSize = reportedTotalSize
+
+            let remaining = max(0, reportedTotalSize - diagnosticsData.count)
+            let copyLength = min(runtimeDiagnosticsPageDataSize, remaining)
+            if copyLength > 0 {
+                diagnosticsData.append(payload.subdata(in: runtimeDiagnosticsPageHeaderSize..<(runtimeDiagnosticsPageHeaderSize + copyLength)))
+            }
+
+            guard page < UInt8.max else {
+                throw LiveSyncError.invalidDiagnosticsPage("too many diagnostics pages")
+            }
+            page += 1
+        } while page < pageCount && diagnosticsData.count < (totalSize ?? 0)
+
+        guard let totalSize, diagnosticsData.count >= totalSize else {
+            throw LiveSyncError.invalidDiagnosticsPage("diagnostics payload incomplete: \(diagnosticsData.count) of \(totalSize ?? 0) bytes")
+        }
+
+        return try decodeDiagnosticsPayload(Data(diagnosticsData.prefix(totalSize)))
+    }
+
+    private func decodeDiagnosticsPayload(_ payload: Data) throws -> RuntimeDiagnostics {
+        guard payload.count >= runtimeDiagnosticsDecodedSize else {
+            throw LiveSyncError.invalidDiagnosticsPage("diagnostics payload is \(payload.count) bytes, expected at least \(runtimeDiagnosticsDecodedSize)")
+        }
+
         return RuntimeDiagnostics(
             lastHostCursor: RuntimeCursor(
                 x: payload.readInt64LE(at: 0),
@@ -500,7 +556,7 @@ private final class DeviceLocator {
     private let staleDescriptorLength = 313
     private let staleDescriptorCRC32: UInt32 = 0x8786_FAA1
     private let expectedDescriptorLength = 323
-    private let expectedDescriptorCRC32: UInt32 = 0x12DC_8B82
+    private let expectedDescriptorCRC32: UInt32 = 0xAEE5_E94B
     private let manager: IOHIDManager
     private var lastProbeError: String?
     private var lastDescriptorSummary: String = ""
@@ -2190,7 +2246,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private var debugTimer: Timer?
     private var previousDebugHostCursor: RuntimeCursor?
     private var previousDebugDiagnostics: RuntimeDiagnostics?
-    private let debugLogVersion = 3
+    private let debugLogVersion = 4
     private let debugLogDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -2722,6 +2778,7 @@ private enum LiveSyncError: Error, CustomStringConvertible, LocalizedError {
     case incompatibleConfigVersion(UInt8)
     case invalidReport(reportID: CFIndex, returnedLength: Int, expectedLength: Int, bytes: String)
     case invalidCRC(reportID: CFIndex, returnedLength: Int, expected: UInt32, actual: UInt32, bytes: String)
+    case invalidDiagnosticsPage(String)
 
     var description: String {
         briefError(self)
@@ -2814,6 +2871,8 @@ private func briefError(_ error: Error) -> String {
         return "invalid feature report id \(reportID): returned length \(returnedLength), expected \(expectedLength), bytes [\(bytes)]"
     case LiveSyncError.invalidCRC(let reportID, let returnedLength, let expected, let actual, let bytes):
         return "feature report id \(reportID) CRC failed: returned length \(returnedLength), expected \(hex(expected)), actual \(hex(actual)), bytes [\(bytes)]"
+    case LiveSyncError.invalidDiagnosticsPage(let reason):
+        return "invalid diagnostics page: \(reason)"
     case LiveSyncError.payloadTooLarge:
         return "runtime payload too large"
     default:

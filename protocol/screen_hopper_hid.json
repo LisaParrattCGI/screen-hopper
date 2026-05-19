@@ -114,6 +114,15 @@
       ["placement_anchor_pending", "uint8"],
       ["mouse_config", "5 * fixed16 uint32_le"]
     ],
+    "runtime_get_diagnostics_request": [
+      ["page", "uint8, zero-based diagnostics page index"]
+    ],
+    "runtime_diagnostics_page": [
+      ["page", "uint8, zero-based diagnostics page index returned"],
+      ["page_count", "uint8"],
+      ["total_size", "uint16_le, complete runtime_diagnostics byte length"],
+      ["data", "52 bytes of runtime_diagnostics at offset page * 52"]
+    ],
     "runtime_diagnostics": [
       ["last_host_cursor", "runtime_cursor"],
       ["last_host_correction_x", "int32_le screen coordinate delta"],
