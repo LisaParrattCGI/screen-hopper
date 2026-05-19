@@ -560,6 +560,7 @@ private final class DeviceLocator {
                     "transport=\(stringProperty(device, kIOHIDTransportKey as CFString) ?? "unknown")",
                     "vendor=\(hex(intProperty(device, kIOHIDVendorIDKey as CFString)))",
                     "product_id=\(hex(intProperty(device, kIOHIDProductIDKey as CFString)))",
+                    "bcd_device=\(hex(intProperty(device, kIOHIDVersionNumberKey as CFString)))",
                     "location=\(hex(intProperty(device, kIOHIDLocationIDKey as CFString)))",
                     "usage_page=\(hex(intProperty(device, kIOHIDPrimaryUsagePageKey as CFString)))",
                     "usage=\(hex(intProperty(device, kIOHIDPrimaryUsageKey as CFString)))",
@@ -2169,7 +2170,9 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         }
 
         guard let device else {
-            debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, diagnostics: nil, error: locator.disconnectedMessage)
+            let message = locator.disconnectedMessage
+            debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, diagnostics: nil, error: message)
+            logDebugError(message: message, host: hostCursor, localMouse: localMouse)
             return
         }
 
@@ -2180,8 +2183,33 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             logDebugSample(host: hostCursor, localMouse: localMouse, status: status, diagnostics: diagnostics)
         } catch {
             self.device = nil
-            debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, diagnostics: nil, error: "Screen Hopper: \(briefError(error))")
+            let message = "Screen Hopper: \(briefError(error))"
+            debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, diagnostics: nil, error: message)
+            logDebugError(message: message, host: hostCursor, localMouse: localMouse)
         }
+    }
+
+    private func logDebugError(message: String, host: RuntimeCursor, localMouse: MouseConfig) {
+        let sample: [String: Any] = [
+            "version": debugLogVersion,
+            "event": "debug_error",
+            "timestamp": debugLogDateFormatter.string(from: Date()),
+            "message": message,
+            "host": [
+                "x": debugCoordinateValue(host.x),
+                "y": debugCoordinateValue(host.y),
+                "reported_screen": debugScreenValue(host.activeScreen),
+            ],
+            "mouse": [
+                "local": debugMouseConfig(localMouse),
+            ],
+        ]
+
+        if let data = try? JSONSerialization.data(withJSONObject: sample, options: [.sortedKeys]),
+           let line = String(data: data, encoding: .utf8) {
+            print(line)
+        }
+        fflush(stdout)
     }
 
     private func logDebugSample(host: RuntimeCursor, localMouse: MouseConfig, status: RuntimeStatus, diagnostics: RuntimeDiagnostics) {
