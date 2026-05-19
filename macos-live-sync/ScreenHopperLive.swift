@@ -2405,7 +2405,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             return
         }
 
-        let hostCursor = currentCursor(reportedScreenOverride: options.reportedScreenOverride)
+        let initialHostCursor = currentCursor(reportedScreenOverride: options.reportedScreenOverride)
         let localMouse = configReader.currentConfig()
 
         if device == nil {
@@ -2414,8 +2414,8 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
 
         guard let device else {
             let message = locator.disconnectedMessage
-            debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, diagnostics: nil, error: message)
-            logDebugError(message: message, host: hostCursor, localMouse: localMouse)
+            debugWindow.update(host: initialHostCursor, localMouse: localMouse, device: nil, diagnostics: nil, error: message)
+            logDebugError(message: message, host: initialHostCursor, localMouse: localMouse)
             return
         }
 
@@ -2423,16 +2423,19 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             let status = try device.fetchStatus()
             do {
                 let diagnostics = try device.fetchDiagnostics()
+                let hostCursor = currentCursor(reportedScreenOverride: options.reportedScreenOverride)
                 debugWindow.update(host: hostCursor, localMouse: localMouse, device: status, diagnostics: diagnostics, error: nil)
                 logDebugSample(host: hostCursor, localMouse: localMouse, status: status, diagnostics: diagnostics)
             } catch {
                 let message = "Screen Hopper diagnostics: \(briefError(error))"
+                let hostCursor = currentCursor(reportedScreenOverride: options.reportedScreenOverride)
                 debugWindow.update(host: hostCursor, localMouse: localMouse, device: status, diagnostics: nil, error: message)
                 logDebugStatusSample(host: hostCursor, localMouse: localMouse, status: status, warning: message)
             }
         } catch {
             self.device = nil
             let message = "Screen Hopper: \(briefError(error))"
+            let hostCursor = currentCursor(reportedScreenOverride: options.reportedScreenOverride)
             debugWindow.update(host: hostCursor, localMouse: localMouse, device: nil, diagnostics: nil, error: message)
             logDebugError(message: message, host: hostCursor, localMouse: localMouse)
         }

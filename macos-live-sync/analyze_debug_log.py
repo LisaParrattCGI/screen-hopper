@@ -283,11 +283,16 @@ def collect_interval_metrics(rows):
         residual_y = host_dy - predicted_dy
         coalesced_residual_x = host_dx - coalesced_dx
         coalesced_residual_y = host_dy - coalesced_dy
+        single_report = (
+            interval.get("movement_sent", 0) == 1
+            and interval.get("prediction_reports_applied", 0) == 1
+        )
 
         metrics.append(
             {
                 "row": row,
                 "host_edge_clamped": likely_host_edge_clamped(row),
+                "single_report": single_report,
                 "sent_mag": sent_mag,
                 "host_mag": magnitude(host_dx, host_dy),
                 "prediction_mag": magnitude(predicted_dx, predicted_dy),
@@ -306,8 +311,7 @@ def collect_interval_metrics(rows):
                 "coalesced_residual_mag": magnitude(coalesced_residual_x, coalesced_residual_y),
                 "clean": (
                     sent_mag > 0
-                    and interval.get("movement_sent", 0) > 0
-                    and interval.get("prediction_reports_applied", 0) > 0
+                    and single_report
                     and interval.get("placement_reports_delivered", 0) == 0
                     and interval.get("transmit_failures", 0) == 0
                     and interval.get("screen_changes_predicted", 0) == 0
@@ -365,7 +369,7 @@ def print_model_verdict(metrics):
     clean = [metric for metric in metrics if metric["clean"] and finite(metric["gain_ratio"])]
     print(f"clean_model_intervals={len(clean)}")
     if len(clean) < 10:
-        print("model_verdict=insufficient clean intervals; collect a longer log with varied movement")
+        print("model_verdict=insufficient single-report intervals; current log is too aggregated for curve-shape diagnosis")
         return
 
     ratios = [metric["gain_ratio"] for metric in clean]
@@ -502,8 +506,10 @@ def main():
     metrics = collect_interval_metrics(rows)
     clean = [metric for metric in metrics if metric["clean"]]
     edge_clamped = [metric for metric in metrics if metric["host_edge_clamped"]]
+    multi_report = [metric for metric in metrics if not metric["single_report"]]
     print(f"intervals_total={len(metrics)} clean_for_model={len(clean)}")
     print(f"intervals_likely_host_edge_clamped={len(edge_clamped)}")
+    print(f"intervals_multi_report={len(multi_report)}")
     describe("clean_sent_mag", [metric["sent_mag"] for metric in clean])
     describe("clean_observed_gain", [metric["observed_gain"] for metric in clean])
     describe("clean_model_gain", [metric["model_gain"] for metric in clean])
@@ -534,6 +540,7 @@ def main():
             f"sent=({row['interval']['sent_dx']},{row['interval']['sent_dy']}) "
             f"reports={row['interval']['movement_sent']} "
             f"placements={row['interval']['placement_reports_delivered']} "
+            f"single_report={row['interval']['movement_sent'] == 1 and row['interval']['prediction_reports_applied'] == 1} "
             f"edge_clamped={likely_host_edge_clamped(row)} "
             f"correction=({row['interval']['host_correction_x']:.3f},{row['interval']['host_correction_y']:.3f})"
         )
