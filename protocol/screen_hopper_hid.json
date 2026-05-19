@@ -31,6 +31,9 @@
     "unmapped_passthrough": "0x01",
     "sticky_mapping": "0x01"
   },
+  "action_usages": {
+    "switch_screen": "0xFFF20001"
+  },
   "mouse_config_scale": 65536,
   "screen_count": 2,
   "config_commands": {
@@ -106,7 +109,7 @@
     "runtime_cursor": [
       ["x", "int64_le screen coordinate, 1000 units per host desktop coordinate unit"],
       ["y", "int64_le screen coordinate, 1000 units per host desktop coordinate unit"],
-      ["active_screen", "int8"]
+      ["active_screen", "int8; runtime status reports the active screen, set_host_cursor treats this byte as reserved and stamps the source screen at the receiver"]
     ],
     "runtime_status": [
       ["cursor", "runtime_cursor"],

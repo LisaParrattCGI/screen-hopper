@@ -1,4 +1,3 @@
-#include <cmath>
 #include <unordered_set>
 
 #include <bsp/board.h>
@@ -32,6 +31,7 @@ macos_mouse_config_t persistent_mouse_config = {
     .placement_tolerance = 32768,
     .report_rate = 0,
 };
+macos_mouse_config_t live_mouse_config = persistent_mouse_config;
 
 bool checksum_ok(const uint8_t* buffer, uint16_t data_size) {
     return crc32(buffer, data_size - 4) == ((crc32_t*) (buffer + data_size - 4))->crc32;
@@ -39,22 +39,6 @@ bool checksum_ok(const uint8_t* buffer, uint16_t data_size) {
 
 bool version_ok(const uint8_t* buffer) {
     return ((set_feature_t*) buffer)->version == CONFIG_VERSION;
-}
-
-double fixed16_to_double(uint32_t value) {
-    return (double) value / MOUSE_CONFIG_SCALE;
-}
-
-uint32_t double_to_fixed16(double value) {
-    if (!std::isfinite(value) || value <= 0.0) {
-        return 0;
-    }
-
-    double scaled = value * MOUSE_CONFIG_SCALE + 0.5;
-    if (scaled >= (double) UINT32_MAX) {
-        return UINT32_MAX;
-    }
-    return (uint32_t) scaled;
 }
 
 uint32_t max_persisted_mapping_count() {
@@ -79,39 +63,21 @@ void set_interval_override_checked(uint8_t value) {
 }
 
 void apply_mouse_config(const macos_mouse_config_t* config) {
-    macos_pointer_acceleration.tracking_speed = fixed16_to_double(config->tracking_speed);
-
-    macos_pointer_acceleration.pointer_resolution = fixed16_to_double(config->pointer_resolution);
-    if (macos_pointer_acceleration.pointer_resolution < 1.0) {
-        macos_pointer_acceleration.pointer_resolution = 1.0;
+    live_mouse_config = *config;
+    if (live_mouse_config.pointer_resolution == 0) {
+        live_mouse_config.pointer_resolution = ADVERTISED_POINTER_RESOLUTION_FIXED;
     }
-
-    macos_pointer_acceleration.frame_rate = fixed16_to_double(config->frame_rate);
-    if (macos_pointer_acceleration.frame_rate < 1.0) {
-        macos_pointer_acceleration.frame_rate = 1.0;
+    if (live_mouse_config.frame_rate == 0) {
+        live_mouse_config.frame_rate = 4390912;
     }
-
-    macos_pointer_acceleration.fixed_multiplier = fixed16_to_double(config->fixed_multiplier);
-    if (macos_pointer_acceleration.fixed_multiplier < (1.0 / MOUSE_CONFIG_SCALE)) {
-        macos_pointer_acceleration.fixed_multiplier = 1.0 / MOUSE_CONFIG_SCALE;
+    if (live_mouse_config.fixed_multiplier == 0) {
+        live_mouse_config.fixed_multiplier = 65536;
     }
-
-    macos_pointer_acceleration.report_rate = fixed16_to_double(config->report_rate);
-    if (macos_pointer_acceleration.report_rate < 0.0) {
-        macos_pointer_acceleration.report_rate = 0.0;
-    }
-
-    macos_placement_tolerance = fixed16_to_double(config->placement_tolerance);
     reset_pointer_acceleration_state();
 }
 
 void fill_mouse_config(macos_mouse_config_t* config) {
-    config->tracking_speed = double_to_fixed16(macos_pointer_acceleration.tracking_speed);
-    config->pointer_resolution = double_to_fixed16(macos_pointer_acceleration.pointer_resolution);
-    config->frame_rate = double_to_fixed16(macos_pointer_acceleration.frame_rate);
-    config->fixed_multiplier = double_to_fixed16(macos_pointer_acceleration.fixed_multiplier);
-    config->placement_tolerance = double_to_fixed16(macos_placement_tolerance);
-    config->report_rate = double_to_fixed16(macos_pointer_acceleration.report_rate);
+    *config = live_mouse_config;
 }
 
 void fill_runtime_status(runtime_status_t* status) {

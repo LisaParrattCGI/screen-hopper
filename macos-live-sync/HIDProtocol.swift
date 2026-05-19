@@ -16,6 +16,7 @@ let screenCoordinateScale = 1000.0
 let screenCount = 2
 let unmappedPassthroughFlag: UInt8 = 0x01
 let stickyMappingFlag: UInt8 = 0x01
+let switchScreenUsage: UInt32 = 0xFFF2_0001
 
 enum ConfigCommand: UInt8 {
     case resetIntoBootsel = 1

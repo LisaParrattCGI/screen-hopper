@@ -1430,9 +1430,11 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
     private let partialScrollField = NSTextField()
     private let intervalOverrideField = NSTextField()
     private let offscreenSensitivityField = NSTextField()
-    private let cursorPlacementField = NSTextField()
     private let constraintControl = NSSegmentedControl(labels: ["None", "Box", "Visible"], trackingMode: .selectOne, target: nil, action: nil)
     private let useCurrentDisplaysButton = NSButton(title: "Use Current Displays", target: nil, action: nil)
+    private let switchScreenSourceField = NSTextField()
+    private let switchScreenLayerField = NSTextField()
+    private let switchScreenStickyCheckbox = NSButton(checkboxWithTitle: "Sticky", target: nil, action: nil)
 
     private let trackingSpeedField = NSTextField()
     private let trackingSpeedSlider = NSSlider(value: 0.6875, minValue: 0, maxValue: 3, target: nil, action: nil)
@@ -1478,7 +1480,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
                     self.populate(from: config)
                     let message = looksLikeLegacyScreenGeometry(config.screens)
                         ? "Configuration loaded. Screen geometry looks like legacy abstract units; use current displays or enter pixel bounds before saving."
-                        : "Configuration loaded. Mappings will be preserved unchanged."
+                        : "Configuration loaded."
                     self.setLoading(false, message: message)
                 }
             } catch {
@@ -1519,6 +1521,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         tabView.translatesAutoresizingMaskIntoConstraints = false
         tabView.addTabViewItem(tabItem(title: "Behavior", view: tabContent(makeGeneralSection())))
         tabView.addTabViewItem(tabItem(title: "Screens", view: tabContent(makeScreensSection())))
+        tabView.addTabViewItem(tabItem(title: "Actions", view: tabContent(makeActionsSection())))
         tabView.addTabViewItem(tabItem(title: "Mouse", view: tabContent(makeMouseSection())))
         root.addArrangedSubview(tabView)
 
@@ -1535,8 +1538,10 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             partialScrollField,
             intervalOverrideField,
             offscreenSensitivityField,
-            cursorPlacementField,
             constraintControl,
+            switchScreenSourceField,
+            switchScreenLayerField,
+            switchScreenStickyCheckbox,
             trackingSpeedField,
             trackingSpeedSlider,
             pointerResolutionField,
@@ -1550,6 +1555,8 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             control.target = self
             control.action = #selector(controlChanged)
         }
+        switchScreenSourceField.delegate = self
+        switchScreenLayerField.delegate = self
 
         useCurrentDisplaysButton.action = #selector(useCurrentDisplays)
 
@@ -1576,7 +1583,6 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             partialScrollField,
             intervalOverrideField,
             offscreenSensitivityField,
-            cursorPlacementField,
             pointerResolutionField,
             frameRateField,
             fixedMultiplierField,
@@ -1585,6 +1591,11 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             styleNumericField(field, width: 104)
         }
 
+        styleUsageField(switchScreenSourceField, width: 128)
+        styleNumericField(switchScreenLayerField, width: 54)
+        switchScreenSourceField.placeholderString = "0x00070065"
+        switchScreenLayerField.placeholderString = "0"
+        switchScreenStickyCheckbox.font = NSFont.systemFont(ofSize: 13)
         styleNumericField(trackingSpeedField, width: 84)
         constraintControl.selectedSegment = 0
         unmappedCheckbox.font = NSFont.systemFont(ofSize: 13)
@@ -1659,7 +1670,6 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         stack.addArrangedSubview(formRow("Partial scroll timeout", partialScrollField, suffix: "ms"))
         stack.addArrangedSubview(formRow("Interval override", intervalOverrideField, suffix: "ms"))
         stack.addArrangedSubview(formRow("Offscreen sensitivity", offscreenSensitivityField, suffix: "x"))
-        stack.addArrangedSubview(formRow("Placement refresh", cursorPlacementField, suffix: "s"))
         stack.addArrangedSubview(unmappedCheckbox)
         return section(title: "Behavior", subtitle: "Runtime behavior that is saved on the device.", content: stack)
     }
@@ -1697,6 +1707,14 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         return section(title: "Screens", subtitle: "Use host display coordinates. Drag screens in the preview, or type exact bounds below.", content: outer)
     }
 
+    private func makeActionsSection() -> NSView {
+        let stack = formStack()
+        stack.addArrangedSubview(formRow("Change screen", switchScreenSourceField))
+        stack.addArrangedSubview(formRow("Layer", switchScreenLayerField))
+        stack.addArrangedSubview(formRow("", switchScreenStickyCheckbox))
+        return section(title: "Actions", subtitle: "Map a source HID usage to a device action.", content: stack)
+    }
+
     private func makeMouseSection() -> NSView {
         let stack = formStack()
         trackingSpeedSlider.translatesAutoresizingMaskIntoConstraints = false
@@ -1711,7 +1729,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         stack.addArrangedSubview(formRow("Fixed multiplier", fixedMultiplierField))
         stack.addArrangedSubview(formRow("Placement tolerance", placementToleranceField, suffix: "px"))
         stack.addArrangedSubview(formRow("Report rate", reportRateField, suffix: "Hz"))
-        return section(title: "Mac Mouse Model", subtitle: "Constants used by the live cursor prediction and placement logic.", content: stack)
+        return section(title: "Mouse Reports", subtitle: "Legacy mouse values retained in the device protocol for diagnostics.", content: stack)
     }
 
     private func screenEditor(index: Int, fields: ScreenFieldSet) -> NSView {
@@ -1812,12 +1830,18 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         field.widthAnchor.constraint(equalToConstant: width).isActive = true
     }
 
+    private func styleUsageField(_ field: NSTextField, width: CGFloat) {
+        field.alignment = .left
+        field.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.widthAnchor.constraint(equalToConstant: width).isActive = true
+    }
+
     private func populate(from config: PersistentConfig) {
         unmappedCheckbox.state = config.unmappedPassthrough ? .on : .off
         partialScrollField.stringValue = String(config.partialScrollTimeout / 1000)
         intervalOverrideField.stringValue = String(config.intervalOverride)
         offscreenSensitivityField.stringValue = decimalString(Double(config.offscreenSensitivity) / 1000.0)
-        cursorPlacementField.stringValue = String(config.cursorPlacementIntervalSeconds)
         constraintControl.selectedSegment = Int(config.constraintMode)
 
         trackingSpeedField.stringValue = decimalString(config.mouse.trackingSpeed)
@@ -1828,10 +1852,23 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         placementToleranceField.stringValue = decimalString(config.mouse.placementTolerance)
         reportRateField.stringValue = decimalString(config.mouse.reportRate)
 
+        populateActionFields(config.mappings)
         populateScreenFields(config.screens)
         layoutView.screens = config.screens
         layoutView.selectedIndex = 0
         updateSaveState()
+    }
+
+    private func populateActionFields(_ mappings: [MappingConfig]) {
+        if let mapping = mappings.first(where: { $0.targetUsage == switchScreenUsage }) {
+            switchScreenSourceField.stringValue = hex(mapping.sourceUsage)
+            switchScreenLayerField.stringValue = String(mapping.layer)
+            switchScreenStickyCheckbox.state = mapping.sticky ? .on : .off
+        } else {
+            switchScreenSourceField.stringValue = ""
+            switchScreenLayerField.stringValue = "0"
+            switchScreenStickyCheckbox.state = .off
+        }
     }
 
     private func populateScreenFields(_ screens: [ScreenConfig]) {
@@ -1854,7 +1891,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         config.intervalOverride = UInt8(clamping: uint32Value(intervalOverrideField))
         config.constraintMode = UInt8(max(0, min(2, constraintControl.selectedSegment)))
         config.offscreenSensitivity = clampedUInt32(Int64((doubleValue(offscreenSensitivityField) * 1000.0).rounded()))
-        config.cursorPlacementIntervalSeconds = uint32Value(cursorPlacementField)
+        config.cursorPlacementIntervalSeconds = 0
         config.mouse = MouseConfig(
             trackingSpeed: doubleValue(trackingSpeedField),
             pointerResolution: doubleValue(pointerResolutionField),
@@ -1877,6 +1914,18 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             )
         }
         config.screens = screens
+        config.mappings.removeAll { $0.targetUsage == switchScreenUsage }
+        if let sourceUsage = usageValue(switchScreenSourceField) {
+            config.mappings.append(
+                MappingConfig(
+                    targetUsage: switchScreenUsage,
+                    sourceUsage: sourceUsage,
+                    scaling: 1000,
+                    layer: UInt8(max(0, min(3, Int(uint32Value(switchScreenLayerField))))),
+                    sticky: switchScreenStickyCheckbox.state == .on
+                )
+            )
+        }
         return config
     }
 
@@ -2006,6 +2055,16 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         if config.offscreenSensitivity == 0 {
             return "Offscreen sensitivity must be greater than zero."
         }
+        let actionSourceText = switchScreenSourceField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !actionSourceText.isEmpty && usageValue(switchScreenSourceField) == nil {
+            return "Change screen usage must be hex, for example 0x00070065."
+        }
+        if parsedFiniteDouble(switchScreenLayerField) == nil {
+            return "Layer must be a valid number."
+        }
+        if uint32Value(switchScreenLayerField) > 3 {
+            return "Layer must be 0, 1, 2, or 3."
+        }
 
         for (index, screen) in config.screens.enumerated() {
             if screen.width == 0 || screen.height == 0 {
@@ -2043,7 +2102,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             ("Partial scroll timeout", partialScrollField),
             ("Interval override", intervalOverrideField),
             ("Offscreen sensitivity", offscreenSensitivityField),
-            ("Placement refresh", cursorPlacementField),
+            ("Layer", switchScreenLayerField),
             ("Tracking speed", trackingSpeedField),
             ("Pointer resolution", pointerResolutionField),
             ("Frame rate", frameRateField),
@@ -2440,9 +2499,14 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private var configWindow: ConfigWindowController?
     private var debugWindow: DebugWindowController?
     private var debugTimer: Timer?
+    private var globalMouseMonitor: Any?
+    private var localMouseMonitor: Any?
+    private var pendingReactiveCursorReport: DispatchWorkItem?
+    private var lastReactiveCursorReportTime: TimeInterval = 0
     private var previousDebugHostCursor: RuntimeCursor?
     private var previousDebugDiagnostics: RuntimeDiagnostics?
-    private let debugLogVersion = 6
+    private let reactiveCursorReportMinInterval: TimeInterval = 0.01
+    private let debugLogVersion = 8
     private let debugLogDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -2457,10 +2521,85 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         installMenu()
+        installHostCursorEventMonitors()
         timer = Timer.scheduledTimer(withTimeInterval: options.pollInterval, repeats: true) { [weak self] _ in
             self?.syncTick()
         }
         syncTick()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        timer?.invalidate()
+        debugTimer?.invalidate()
+        pendingReactiveCursorReport?.cancel()
+        if let globalMouseMonitor {
+            NSEvent.removeMonitor(globalMouseMonitor)
+        }
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+        }
+    }
+
+    private func installHostCursorEventMonitors() {
+        let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] _ in
+            self?.hostMouseMovementEvent()
+        }
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            self?.hostMouseMovementEvent()
+            return event
+        }
+    }
+
+    private func hostMouseMovementEvent() {
+        if Thread.isMainThread {
+            scheduleReactiveCursorReport()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.scheduleReactiveCursorReport()
+            }
+        }
+    }
+
+    private func scheduleReactiveCursorReport() {
+        let now = Date.timeIntervalSinceReferenceDate
+        let elapsed = now - lastReactiveCursorReportTime
+        if elapsed >= reactiveCursorReportMinInterval {
+            pendingReactiveCursorReport?.cancel()
+            pendingReactiveCursorReport = nil
+            lastReactiveCursorReportTime = now
+            sendReactiveCursorReport()
+            return
+        }
+
+        guard pendingReactiveCursorReport == nil else {
+            return
+        }
+
+        let delay = reactiveCursorReportMinInterval - elapsed
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else {
+                return
+            }
+            self.pendingReactiveCursorReport = nil
+            self.lastReactiveCursorReportTime = Date.timeIntervalSinceReferenceDate
+            self.sendReactiveCursorReport()
+        }
+        pendingReactiveCursorReport = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func sendReactiveCursorReport() {
+        guard let device else {
+            return
+        }
+
+        do {
+            _ = try sendCurrentCursor(to: device)
+        } catch {
+            self.device = nil
+            updateMenu(connected: false, message: "Screen Hopper: \(briefError(error))")
+        }
     }
 
     private func installMenu() {
@@ -2906,14 +3045,20 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
                 lastConfig = config
             }
 
-            let cursor = currentCursor(reportedScreenOverride: options.reportedScreenOverride)
-            try device.sendCursor(cursor)
-            lastCursor = cursor
+            let cursor = try sendCurrentCursor(to: device)
             updateMenu(connected: true, message: menuSummary(config: config, cursor: cursor))
         } catch {
             self.device = nil
             updateMenu(connected: false, message: "Screen Hopper: \(briefError(error))")
         }
+    }
+
+    private func sendCurrentCursor(to device: ScreenHopperDevice) throws -> RuntimeCursor {
+        let cursor = currentCursor(reportedScreenOverride: options.reportedScreenOverride)
+        try device.sendCursor(cursor)
+        lastCursor = cursor
+        lastReactiveCursorReportTime = Date.timeIntervalSinceReferenceDate
+        return cursor
     }
 
     private func updateMenu(connected: Bool, message: String) {
@@ -3114,6 +3259,24 @@ private func doubleValue(_ field: NSTextField) -> Double {
 
 private func uint32Value(_ field: NSTextField) -> UInt32 {
     clampedUInt32(Int64(doubleValue(field).rounded()))
+}
+
+private func usageValue(_ field: NSTextField) -> UInt32? {
+    let raw = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !raw.isEmpty else {
+        return nil
+    }
+
+    let text: String
+    if raw.lowercased().hasPrefix("0x") {
+        text = String(raw.dropFirst(2))
+    } else {
+        text = raw
+    }
+    guard !text.isEmpty else {
+        return nil
+    }
+    return UInt32(text, radix: 16)
 }
 
 private func currentDisplayRects() -> [CGRect] {

@@ -1,11 +1,12 @@
 # Screen Hopper Live Sync
 
-Small macOS menu-bar utility that keeps Screen Hopper's runtime mouse model in
-sync with the Mac it is attached to.
+Small macOS menu-bar utility that reports the local cursor position to the
+Screen Hopper device and edits the persistent device configuration.
 
-It sends volatile runtime HID feature reports once per second, and it also has a
-configuration window for editing the persistent device configuration through the
-configuration feature report.
+It sends cursor feature reports reactively when macOS reports mouse movement or
+drag events. A slower timer keeps configuration synced and provides a fallback
+cursor refresh. The app also has a configuration window for editing the
+persistent device configuration through the configuration feature report.
 
 Build:
 
@@ -38,17 +39,15 @@ Options:
 --fixed-multiplier N       acceleration fixed multiplier, default 1
 --placement-tolerance N    cursor placement tolerance, default 0.5
 --report-rate N            fallback pointer report rate in Hz, default 0
---poll-interval N          seconds between live sync ticks, default 1
+--poll-interval N          seconds between fallback/config sync ticks, default 1
 ```
 
 Normal use does not require a screen option. The firmware path identifies
 whether reports came through `screenhopper_a` or the forwarder and stamps the
 runtime cursor report with the appropriate Screen Hopper screen.
 
-The tool reads `com.apple.mouse.scaling` from the global macOS preferences. It
-also reads Screen Hopper's `HIDPointerResolution`,
-`HIDPointerAccelerationMultiplier`, and `HIDPointerReportRate` HID properties
-when macOS exposes them; configured values are fallbacks for missing properties.
+The mouse options are retained for protocol compatibility and diagnostics; the
+firmware no longer uses them to predict the host cursor.
 
 Menu items:
 
