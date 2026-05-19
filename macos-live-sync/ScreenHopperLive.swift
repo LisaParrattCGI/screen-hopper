@@ -7,9 +7,13 @@ import ServiceManagement
 private struct FeatureReportMode {
     let writeIncludesReportID: Bool
 
+    var description: String {
+        writeIncludesReportID ? "with-report-id" : "without-report-id"
+    }
+
     static let candidates = [
-        FeatureReportMode(writeIncludesReportID: false),
         FeatureReportMode(writeIncludesReportID: true),
+        FeatureReportMode(writeIncludesReportID: false),
     ]
 }
 
@@ -486,16 +490,18 @@ private final class DeviceLocator {
                 continue
             }
 
+            var probeErrors: [String] = []
             for mode in FeatureReportMode.candidates {
                 let candidate = ScreenHopperDevice(device: device, mode: mode)
                 do {
                     try probe(candidate)
                     return candidate
                 } catch {
-                    lastProbeError = "\(deviceSummary(device)): \(error)"
+                    probeErrors.append("\(mode.description): \(briefError(error))")
                     continue
                 }
             }
+            lastProbeError = "\(deviceSummary(device)): \(probeErrors.joined(separator: "; "))"
 
             IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
         }
@@ -2291,13 +2297,21 @@ private func makeFrogStatusIcon() -> NSImage {
     return image
 }
 
-private enum LiveSyncError: Error {
+private enum LiveSyncError: Error, CustomStringConvertible, LocalizedError {
     case payloadTooLarge
     case hidSetReportFailed(IOReturn)
     case hidGetReportFailed(IOReturn)
     case incompatibleConfigVersion(UInt8)
     case invalidReport
     case invalidCRC
+
+    var description: String {
+        briefError(self)
+    }
+
+    var errorDescription: String? {
+        description
+    }
 }
 
 private func fixed16(_ value: Double) -> UInt32 {
