@@ -71,7 +71,8 @@ payload = read_feature(device)
     frame_rate,
     fixed_multiplier,
     placement_tolerance,
-) = struct.unpack_from("<BBLLLLBBLL5L", payload)
+    report_rate,
+) = struct.unpack_from("<BBLLLLBBLL6L", payload)
 
 if version != CONFIG_VERSION:
     raise Exception("Incompatible version")
@@ -90,6 +91,7 @@ config = {
         "frame_rate": from_fixed16(frame_rate),
         "fixed_multiplier": from_fixed16(fixed_multiplier),
         "placement_tolerance": from_fixed16(placement_tolerance),
+        "report_rate": from_fixed16(report_rate),
     },
     "screens": [],
     "mappings": [],

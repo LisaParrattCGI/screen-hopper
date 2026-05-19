@@ -36,5 +36,6 @@ macos_pointer_acceleration_settings_t macos_pointer_acceleration = {
     .pointer_resolution = ADVERTISED_POINTER_RESOLUTION_COUNTS_PER_INCH,
     .frame_rate = 67.0,
     .fixed_multiplier = 1.0,
+    .report_rate = 0.0,
 };
 double macos_placement_tolerance = 0.5;

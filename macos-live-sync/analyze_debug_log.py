@@ -21,7 +21,7 @@ MACOS_ACCEL_CURVES = [
     (163840, 64881, 108790, 21627, 0, 583270, 786432),
     (196608, 65536, 123208, 26214, 0, 589824, 786432),
 ]
-SUPPORTED_LOG_VERSIONS = {3, 4, 5}
+SUPPORTED_LOG_VERSIONS = {3, 4, 5, 6}
 EDGE_EPSILON = 2.0
 EDGE_DELTA_EPSILON = 2.0
 
@@ -279,6 +279,7 @@ def collect_interval_metrics(rows):
         observed_gain = projection_gain(sent_dx, sent_dy, host_dx, host_dy)
         model_gain = projection_gain(sent_dx, sent_dy, predicted_dx, predicted_dy)
         coalesced_gain = projection_gain(sent_dx, sent_dy, coalesced_dx, coalesced_dy)
+        acceleration = row.get("acceleration", {})
         residual_x = host_dx - predicted_dx
         residual_y = host_dy - predicted_dy
         coalesced_residual_x = host_dx - coalesced_dx
@@ -300,6 +301,10 @@ def collect_interval_metrics(rows):
                 "observed_gain": observed_gain,
                 "model_gain": model_gain,
                 "coalesced_gain": coalesced_gain,
+                "acceleration_delta_us": acceleration.get("delta_us"),
+                "acceleration_rate_multiplier": acceleration.get("rate_multiplier"),
+                "acceleration_velocity": acceleration.get("velocity"),
+                "acceleration_adjusted_velocity": acceleration.get("adjusted_velocity"),
                 "gain_ratio": signed_ratio(observed_gain, model_gain),
                 "coalesced_gain_ratio": signed_ratio(observed_gain, coalesced_gain),
                 "observed_perp": perpendicular_error(sent_dx, sent_dy, host_dx, host_dy),
@@ -517,6 +522,10 @@ def main():
     describe("clean_obs_model_gain_ratio", [metric["gain_ratio"] for metric in clean])
     describe("clean_obs_coalesced_gain_ratio", [metric["coalesced_gain_ratio"] for metric in clean])
     describe("clean_residual_perpendicular", [metric["residual_perp"] for metric in clean])
+    describe("clean_acceleration_delta_us", [metric["acceleration_delta_us"] for metric in clean])
+    describe("clean_acceleration_rate_multiplier", [metric["acceleration_rate_multiplier"] for metric in clean])
+    describe("clean_acceleration_velocity", [metric["acceleration_velocity"] for metric in clean])
+    describe("clean_acceleration_adjusted_velocity", [metric["acceleration_adjusted_velocity"] for metric in clean])
     print_model_verdict(metrics)
     print_gain_table(metrics)
 
@@ -541,6 +550,8 @@ def main():
             f"reports={row['interval']['movement_sent']} "
             f"placements={row['interval']['placement_reports_delivered']} "
             f"single_report={row['interval']['movement_sent'] == 1 and row['interval']['prediction_reports_applied'] == 1} "
+            f"rate_multiplier={row.get('acceleration', {}).get('rate_multiplier', 'n/a')} "
+            f"delta_us={row.get('acceleration', {}).get('delta_us', 'n/a')} "
             f"edge_clamped={likely_host_edge_clamped(row)} "
             f"correction=({row['interval']['host_correction_x']:.3f},{row['interval']['host_correction_y']:.3f})"
         )

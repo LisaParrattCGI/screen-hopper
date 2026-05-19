@@ -108,6 +108,7 @@ int64_t cursor_x = 0;
 int64_t cursor_y = 0;
 double cursor_fraction_x = 0.0;
 double cursor_fraction_y = 0.0;
+macos_pointer_acceleration_state_t pointer_acceleration_state[NSCREENS] = {};
 
 int8_t active_screen = 0;
 
@@ -169,6 +170,17 @@ int32_t clamp_diagnostic_delta(int64_t value) {
         return std::numeric_limits<int32_t>::min();
     }
     return (int32_t) value;
+}
+
+uint32_t diagnostic_fixed16(double value) {
+    if (!std::isfinite(value) || value <= 0.0) {
+        return 0;
+    }
+    double scaled = value * MOUSE_CONFIG_SCALE + 0.5;
+    if (scaled >= (double) UINT32_MAX) {
+        return UINT32_MAX;
+    }
+    return (uint32_t) scaled;
 }
 
 int16_t clamp_diagnostic_axis(int32_t value) {
@@ -750,6 +762,16 @@ runtime_diagnostics_t get_runtime_diagnostics() {
     return runtime_diagnostics;
 }
 
+void reset_pointer_acceleration_state() {
+    for (uint8_t i = 0; i < NSCREENS; i++) {
+        reset_macos_acceleration_state(pointer_acceleration_state[i]);
+    }
+    runtime_diagnostics.last_acceleration_delta_us = 0;
+    runtime_diagnostics.last_acceleration_rate_multiplier = diagnostic_fixed16(1.0);
+    runtime_diagnostics.last_acceleration_velocity = 0;
+    runtime_diagnostics.last_acceleration_adjusted_velocity = 0;
+}
+
 void get_runtime_placement_flags(uint8_t& placement_active, uint8_t& placement_anchor_pending) {
     placement_active = cursor_placement.active ? 1 : 0;
     placement_anchor_pending = cursor_placement.anchor_pending ? 1 : 0;
@@ -809,7 +831,7 @@ void get_sent_relative_axes(uint8_t report_index, int16_t& dx, int16_t& dy) {
     dy = (int16_t) get_usage_value(report, REPORT_ID_MOUSE_RELATIVE, our_usage_y);
 }
 
-void apply_sent_movement_prediction(int16_t dx, int16_t dy) {
+void apply_sent_movement_prediction(int16_t dx, int16_t dy, uint8_t target_screen, uint64_t timestamp_us) {
     runtime_diagnostics.last_prediction_applied = 0;
     if (dx == 0 && dy == 0) {
         runtime_diagnostics.last_predicted_dx = 0;
@@ -817,7 +839,20 @@ void apply_sent_movement_prediction(int16_t dx, int16_t dy) {
         return;
     }
 
-    macos_delta_t accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
+    macos_delta_t accelerated;
+    if (target_screen < NSCREENS) {
+        accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration, pointer_acceleration_state[target_screen], timestamp_us);
+        runtime_diagnostics.last_acceleration_delta_us = pointer_acceleration_state[target_screen].last_delta_us;
+        runtime_diagnostics.last_acceleration_rate_multiplier = diagnostic_fixed16(pointer_acceleration_state[target_screen].last_rate_multiplier);
+        runtime_diagnostics.last_acceleration_velocity = diagnostic_fixed16(pointer_acceleration_state[target_screen].last_velocity);
+        runtime_diagnostics.last_acceleration_adjusted_velocity = diagnostic_fixed16(pointer_acceleration_state[target_screen].last_adjusted_velocity);
+    } else {
+        accelerated = apply_macos_acceleration(dx, dy, macos_pointer_acceleration);
+        runtime_diagnostics.last_acceleration_delta_us = 0;
+        runtime_diagnostics.last_acceleration_rate_multiplier = diagnostic_fixed16(1.0);
+        runtime_diagnostics.last_acceleration_velocity = 0;
+        runtime_diagnostics.last_acceleration_adjusted_velocity = 0;
+    }
     int64_t accelerated_dx = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dx), cursor_fraction_x);
     int64_t accelerated_dy = consume_fractional_cursor_delta(screen_coord_delta(accelerated.dy), cursor_fraction_y);
     runtime_diagnostics.last_predicted_dx = clamp_diagnostic_delta(accelerated_dx);
@@ -1113,13 +1148,16 @@ void send_report() {
     bool cursor_placement_report = outgoing_reports_cursor_placement[or_head];
 
     bool transmitted = true;
+    uint64_t transmit_timestamp_us = 0;
     if (target_screen == 0) {
         transmitted = tud_hid_report(report_id, outgoing_reports[or_head] + 2, report_sizes[report_id]);
         if (transmitted) {
+            transmit_timestamp_us = time_us_64();
             status_led_flash_green();
         }
     } else {
         serial_write(outgoing_reports[or_head] + 1, report_sizes[report_id] + 1, FORWARDER_UART);
+        transmit_timestamp_us = time_us_64();
     }
     if (!transmitted) {
         runtime_diagnostics.transmit_failures++;
@@ -1155,7 +1193,7 @@ void send_report() {
             runtime_diagnostics.last_predicted_dx = 0;
             runtime_diagnostics.last_predicted_dy = 0;
         } else {
-            apply_sent_movement_prediction(sent_dx, sent_dy);
+            apply_sent_movement_prediction(sent_dx, sent_dy, target_screen, transmit_timestamp_us);
         }
     }
 }

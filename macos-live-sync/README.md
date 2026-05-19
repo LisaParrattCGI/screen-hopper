@@ -37,6 +37,7 @@ Options:
 --frame-rate N             acceleration frame rate, default 67
 --fixed-multiplier N       acceleration fixed multiplier, default 1
 --placement-tolerance N    cursor placement tolerance, default 0.5
+--report-rate N            fallback pointer report rate in Hz, default 0
 --poll-interval N          seconds between live sync ticks, default 1
 ```
 
@@ -44,9 +45,10 @@ Normal use does not require a screen option. The firmware path identifies
 whether reports came through `screenhopper_a` or the forwarder and stamps the
 runtime cursor report with the appropriate Screen Hopper screen.
 
-The tool reads `com.apple.mouse.scaling` from the global macOS preferences and
-uses the first HID mouse `HIDPointerResolution` property it can find. If the
-pointer resolution is not exposed by macOS, it uses the configured fallback.
+The tool reads `com.apple.mouse.scaling` from the global macOS preferences. It
+also reads Screen Hopper's `HIDPointerResolution`,
+`HIDPointerAccelerationMultiplier`, and `HIDPointerReportRate` HID properties
+when macOS exposes them; configured values are fallbacks for missing properties.
 
 Menu items:
 

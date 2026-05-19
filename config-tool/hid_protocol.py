@@ -1,7 +1,7 @@
 VENDOR_ID = 0xCAFE
 PRODUCT_ID = 0xBAF3
 
-CONFIG_VERSION = 7
+CONFIG_VERSION = 8
 CONFIG_SIZE = 60
 RUNTIME_SIZE = 60
 
@@ -45,6 +45,7 @@ DEFAULT_MOUSE_CONFIG = {
     "frame_rate": 67.0,
     "fixed_multiplier": 1.0,
     "placement_tolerance": 0.5,
+    "report_rate": 0.0,
 }
 
 

@@ -29,7 +29,7 @@ private struct FeatureReportMode {
 private let runtimeFeaturePayloadSize = runtimeSize - 4
 private let runtimeDiagnosticsPageHeaderSize = 4
 private let runtimeDiagnosticsPageDataSize = runtimeFeaturePayloadSize - runtimeDiagnosticsPageHeaderSize
-private let runtimeDiagnosticsDecodedSize = 139
+private let runtimeDiagnosticsDecodedSize = 155
 
 private struct Options {
     var reportedScreenOverride: Int8 = -1
@@ -37,6 +37,7 @@ private struct Options {
     var frameRate: Double = 67.0
     var fixedMultiplier: Double = 1.0
     var placementTolerance: Double = 0.5
+    var reportRate: Double = 0.0
     var pollInterval: TimeInterval = 1.0
 }
 
@@ -46,6 +47,7 @@ private struct MouseConfig: Equatable {
     var frameRate: Double
     var fixedMultiplier: Double
     var placementTolerance: Double
+    var reportRate: Double
 
     var fixedValues: [UInt32] {
         [
@@ -54,6 +56,7 @@ private struct MouseConfig: Equatable {
             fixed16(frameRate),
             fixed16(fixedMultiplier),
             fixed16(placementTolerance),
+            fixed16(reportRate),
         ]
     }
 
@@ -137,6 +140,10 @@ private struct RuntimeDiagnostics {
     var totalPredictedDY: Int64
     var totalHostCorrectionX: Int64
     var totalHostCorrectionY: Int64
+    var lastAccelerationDeltaUS: UInt32
+    var lastAccelerationRateMultiplier: Double
+    var lastAccelerationVelocity: Double
+    var lastAccelerationAdjustedVelocity: Double
 }
 
 private final class CRC32 {
@@ -204,7 +211,8 @@ private final class ScreenHopperDevice {
                 pointerResolution: doubleFromFixed16(payload.readUInt32LE(at: 23)),
                 frameRate: doubleFromFixed16(payload.readUInt32LE(at: 27)),
                 fixedMultiplier: doubleFromFixed16(payload.readUInt32LE(at: 31)),
-                placementTolerance: doubleFromFixed16(payload.readUInt32LE(at: 35))
+                placementTolerance: doubleFromFixed16(payload.readUInt32LE(at: 35)),
+                reportRate: doubleFromFixed16(payload.readUInt32LE(at: 39))
             )
         )
     }
@@ -298,7 +306,11 @@ private final class ScreenHopperDevice {
             totalPredictedDX: payload.readInt64LE(at: 107),
             totalPredictedDY: payload.readInt64LE(at: 115),
             totalHostCorrectionX: payload.readInt64LE(at: 123),
-            totalHostCorrectionY: payload.readInt64LE(at: 131)
+            totalHostCorrectionY: payload.readInt64LE(at: 131),
+            lastAccelerationDeltaUS: payload.readUInt32LE(at: 139),
+            lastAccelerationRateMultiplier: doubleFromFixed16(payload.readUInt32LE(at: 143)),
+            lastAccelerationVelocity: doubleFromFixed16(payload.readUInt32LE(at: 147)),
+            lastAccelerationAdjustedVelocity: doubleFromFixed16(payload.readUInt32LE(at: 151))
         )
     }
 
@@ -308,6 +320,21 @@ private final class ScreenHopperDevice {
             payload.appendUInt32LE(value)
         }
         try sendRuntimeCommand(.setMouseConfig, payload: payload)
+    }
+
+    func pointerResolution() -> Double? {
+        fixed16OrPlainProperty("HIDPointerResolution")
+    }
+
+    func pointerAccelerationMultiplier() -> Double? {
+        fixed16OrPlainProperty("HIDPointerAccelerationMultiplier")
+    }
+
+    func pointerReportRate() -> Double? {
+        guard let value = numericProperty("HIDPointerReportRate"), value >= 0 else {
+            return nil
+        }
+        return value
     }
 
     func sendCursor(_ cursor: RuntimeCursor) throws {
@@ -374,7 +401,8 @@ private final class ScreenHopperDevice {
                 pointerResolution: doubleFromFixed16(payload.readUInt32LE(at: 32)),
                 frameRate: doubleFromFixed16(payload.readUInt32LE(at: 36)),
                 fixedMultiplier: doubleFromFixed16(payload.readUInt32LE(at: 40)),
-                placementTolerance: doubleFromFixed16(payload.readUInt32LE(at: 44))
+                placementTolerance: doubleFromFixed16(payload.readUInt32LE(at: 44)),
+                reportRate: doubleFromFixed16(payload.readUInt32LE(at: 48))
             ),
             screens: screens,
             mappings: mappings
@@ -552,6 +580,27 @@ private final class ScreenHopperDevice {
 
         return payload
     }
+
+    private func numericProperty(_ key: String) -> Double? {
+        guard let property = IOHIDDeviceGetProperty(device, key as CFString) else {
+            return nil
+        }
+
+        if let number = property as? NSNumber {
+            return number.doubleValue
+        }
+        if let string = property as? String {
+            return Double(string)
+        }
+        return nil
+    }
+
+    private func fixed16OrPlainProperty(_ key: String) -> Double? {
+        guard let value = numericProperty(key), value > 0 else {
+            return nil
+        }
+        return value > 4096.0 ? value / fixed16Scale : value
+    }
 }
 
 private final class DeviceLocator {
@@ -691,6 +740,7 @@ private final class DeviceLocator {
                 "max_input": intProperty(device, kIOHIDMaxInputReportSizeKey as CFString) as Any,
                 "max_output": intProperty(device, kIOHIDMaxOutputReportSizeKey as CFString) as Any,
                 "max_feature": intProperty(device, "MaxFeatureReportSize" as CFString) as Any,
+                "pointer_properties": pointerPropertiesJSON(device),
                 "report_descriptor": descriptorJSON(descriptor),
                 "runtime_candidate": isRuntimeCollection(device),
                 "descriptor_problems": descriptorDiagnostics(descriptor),
@@ -723,6 +773,9 @@ private final class DeviceLocator {
                     "max_input=\(intString(device, kIOHIDMaxInputReportSizeKey as CFString))",
                     "max_output=\(intString(device, kIOHIDMaxOutputReportSizeKey as CFString))",
                     "max_feature=\(intString(device, "MaxFeatureReportSize" as CFString))",
+                    "pointer_resolution=\(numericString(fixed16OrPlainProperty(device, "HIDPointerResolution")))",
+                    "pointer_acceleration_multiplier=\(numericString(fixed16OrPlainProperty(device, "HIDPointerAccelerationMultiplier")))",
+                    "pointer_report_rate=\(numericString(numericProperty(device, "HIDPointerReportRate")))",
                     "report_descriptor=\(descriptorSummary(descriptor))",
                     "runtime_candidate=\(isRuntimeCollection(device) ? "yes" : "no")",
                 ].joined(separator: " ")
@@ -761,8 +814,46 @@ private final class DeviceLocator {
         IOHIDDeviceGetProperty(device, key) as? String
     }
 
+    private func numericProperty(_ device: IOHIDDevice, _ key: String) -> Double? {
+        guard let value = IOHIDDeviceGetProperty(device, key as CFString) else {
+            return nil
+        }
+        if let number = value as? NSNumber {
+            return number.doubleValue
+        }
+        if let string = value as? String {
+            return Double(string)
+        }
+        return nil
+    }
+
+    private func fixed16OrPlainProperty(_ device: IOHIDDevice, _ key: String) -> Double? {
+        guard let value = numericProperty(device, key), value > 0 else {
+            return nil
+        }
+        return value > 4096.0 ? value / fixed16Scale : value
+    }
+
     private func intString(_ device: IOHIDDevice, _ key: CFString) -> String {
         intProperty(device, key).map(String.init) ?? "unknown"
+    }
+
+    private func numericString(_ value: Double?) -> String {
+        value.map(decimalString) ?? "unknown"
+    }
+
+    private func jsonNumber(_ value: Double?) -> Any {
+        value.map { $0 as Any } ?? NSNull()
+    }
+
+    private func pointerPropertiesJSON(_ device: IOHIDDevice) -> [String: Any] {
+        [
+            "resolution_raw": jsonNumber(numericProperty(device, "HIDPointerResolution")),
+            "resolution": jsonNumber(fixed16OrPlainProperty(device, "HIDPointerResolution")),
+            "acceleration_multiplier_raw": jsonNumber(numericProperty(device, "HIDPointerAccelerationMultiplier")),
+            "acceleration_multiplier": jsonNumber(fixed16OrPlainProperty(device, "HIDPointerAccelerationMultiplier")),
+            "report_rate": jsonNumber(numericProperty(device, "HIDPointerReportRate")),
+        ]
     }
 
     private func reportDescriptorData(_ device: IOHIDDevice) -> Data? {
@@ -1024,13 +1115,14 @@ private final class MouseConfigReader {
         IOHIDManagerOpen(mouseManager, IOOptionBits(kIOHIDOptionsTypeNone))
     }
 
-    func currentConfig() -> MouseConfig {
+    func currentConfig(screenHopperDevice: ScreenHopperDevice?) -> MouseConfig {
         MouseConfig(
             trackingSpeed: readTrackingSpeed() ?? 0.6875,
-            pointerResolution: readPointerResolution() ?? options.pointerResolution,
+            pointerResolution: screenHopperDevice?.pointerResolution() ?? readPointerResolution() ?? options.pointerResolution,
             frameRate: options.frameRate,
-            fixedMultiplier: options.fixedMultiplier,
-            placementTolerance: options.placementTolerance
+            fixedMultiplier: screenHopperDevice?.pointerAccelerationMultiplier() ?? options.fixedMultiplier,
+            placementTolerance: options.placementTolerance,
+            reportRate: screenHopperDevice?.pointerReportRate() ?? options.reportRate
         )
     }
 
@@ -1265,6 +1357,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
     private let frameRateField = NSTextField()
     private let fixedMultiplierField = NSTextField()
     private let placementToleranceField = NSTextField()
+    private let reportRateField = NSTextField()
 
     private let layoutView = ScreenLayoutView()
     private var screenFields: [ScreenFieldSet] = []
@@ -1367,6 +1460,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             frameRateField,
             fixedMultiplierField,
             placementToleranceField,
+            reportRateField,
             useCurrentDisplaysButton,
         ]
         for control in controls {
@@ -1533,6 +1627,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         stack.addArrangedSubview(formRow("Frame rate", frameRateField, suffix: "Hz"))
         stack.addArrangedSubview(formRow("Fixed multiplier", fixedMultiplierField))
         stack.addArrangedSubview(formRow("Placement tolerance", placementToleranceField, suffix: "px"))
+        stack.addArrangedSubview(formRow("Report rate", reportRateField, suffix: "Hz"))
         return section(title: "Mac Mouse Model", subtitle: "Constants used by the live cursor prediction and placement logic.", content: stack)
     }
 
@@ -1648,6 +1743,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         frameRateField.stringValue = decimalString(config.mouse.frameRate)
         fixedMultiplierField.stringValue = decimalString(config.mouse.fixedMultiplier)
         placementToleranceField.stringValue = decimalString(config.mouse.placementTolerance)
+        reportRateField.stringValue = decimalString(config.mouse.reportRate)
 
         populateScreenFields(config.screens)
         layoutView.screens = config.screens
@@ -1681,7 +1777,8 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             pointerResolution: doubleValue(pointerResolutionField),
             frameRate: doubleValue(frameRateField),
             fixedMultiplier: doubleValue(fixedMultiplierField),
-            placementTolerance: doubleValue(placementToleranceField)
+            placementTolerance: doubleValue(placementToleranceField),
+            reportRate: doubleValue(reportRateField)
         )
 
         var screens: [ScreenConfig] = []
@@ -1851,6 +1948,9 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
         if config.mouse.placementTolerance < 0 || !config.mouse.placementTolerance.isFinite {
             return "Placement tolerance must be zero or greater."
         }
+        if config.mouse.reportRate < 0 || !config.mouse.reportRate.isFinite {
+            return "Report rate must be zero or greater."
+        }
 
         return nil
     }
@@ -1866,6 +1966,7 @@ private final class ConfigWindowController: NSWindowController, NSWindowDelegate
             ("Frame rate", frameRateField),
             ("Fixed multiplier", fixedMultiplierField),
             ("Placement tolerance", placementToleranceField),
+            ("Report rate", reportRateField),
         ]
 
         for (name, field) in fields where parsedFiniteDouble(field) == nil {
@@ -1916,10 +2017,13 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
     private let deviceFixedMultiplierLabel = NSTextField(labelWithString: "-")
     private let localPlacementToleranceLabel = NSTextField(labelWithString: "-")
     private let devicePlacementToleranceLabel = NSTextField(labelWithString: "-")
+    private let localReportRateLabel = NSTextField(labelWithString: "-")
+    private let deviceReportRateLabel = NSTextField(labelWithString: "-")
     private let hostCorrectionLabel = NSTextField(labelWithString: "-")
     private let lastHostCursorLabel = NSTextField(labelWithString: "-")
     private let rawMovementLabel = NSTextField(labelWithString: "-")
     private let predictedMovementLabel = NSTextField(labelWithString: "-")
+    private let accelerationTimingLabel = NSTextField(labelWithString: "-")
     private let movementReportCountLabel = NSTextField(labelWithString: "-")
     private let hostReportCountLabel = NSTextField(labelWithString: "-")
     private let queueLabel = NSTextField(labelWithString: "-")
@@ -1928,7 +2032,7 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 680, height: 650),
+            contentRect: NSRect(x: 0, y: 0, width: 720, height: 710),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -2002,6 +2106,7 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
             ("Host correction", hostCorrectionLabel),
             ("Last raw movement", rawMovementLabel),
             ("Last predicted movement", predictedMovementLabel),
+            ("Acceleration timing", accelerationTimingLabel),
             ("Movement reports", movementReportCountLabel),
             ("Host reports", hostReportCountLabel),
             ("Queue depth", queueLabel),
@@ -2071,6 +2176,7 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         stack.addArrangedSubview(mouseModelRow("Frame rate", localFrameRateLabel, deviceFrameRateLabel))
         stack.addArrangedSubview(mouseModelRow("Fixed multiplier", localFixedMultiplierLabel, deviceFixedMultiplierLabel))
         stack.addArrangedSubview(mouseModelRow("Placement tolerance", localPlacementToleranceLabel, devicePlacementToleranceLabel))
+        stack.addArrangedSubview(mouseModelRow("Report rate", localReportRateLabel, deviceReportRateLabel))
         return stack
     }
 
@@ -2139,6 +2245,7 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         localFrameRateLabel.stringValue = mouseValueString(local.frameRate)
         localFixedMultiplierLabel.stringValue = mouseValueString(local.fixedMultiplier)
         localPlacementToleranceLabel.stringValue = mouseValueString(local.placementTolerance)
+        localReportRateLabel.stringValue = mouseValueString(local.reportRate)
 
         guard let device else {
             for label in [
@@ -2147,6 +2254,7 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
                 deviceFrameRateLabel,
                 deviceFixedMultiplierLabel,
                 devicePlacementToleranceLabel,
+                deviceReportRateLabel,
             ] {
                 label.stringValue = "-"
             }
@@ -2158,6 +2266,7 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         deviceFrameRateLabel.stringValue = mouseValueString(device.frameRate)
         deviceFixedMultiplierLabel.stringValue = mouseValueString(device.fixedMultiplier)
         devicePlacementToleranceLabel.stringValue = mouseValueString(device.placementTolerance)
+        deviceReportRateLabel.stringValue = mouseValueString(device.reportRate)
     }
 
     private func updateDiagnosticLabels(_ diagnostics: RuntimeDiagnostics?) {
@@ -2167,6 +2276,7 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
                 hostCorrectionLabel,
                 rawMovementLabel,
                 predictedMovementLabel,
+                accelerationTimingLabel,
                 movementReportCountLabel,
                 hostReportCountLabel,
                 queueLabel,
@@ -2181,6 +2291,7 @@ private final class DebugWindowController: NSWindowController, NSWindowDelegate 
         hostCorrectionLabel.stringValue = "\(diagnosticCoordString(diagnostics.lastHostCorrectionX)), \(diagnosticCoordString(diagnostics.lastHostCorrectionY))"
         rawMovementLabel.stringValue = "\(diagnostics.lastRawDX), \(diagnostics.lastRawDY)"
         predictedMovementLabel.stringValue = "\(diagnosticCoordString(diagnostics.lastPredictedDX)), \(diagnosticCoordString(diagnostics.lastPredictedDY))"
+        accelerationTimingLabel.stringValue = "\(diagnostics.lastAccelerationDeltaUS) us, rate x\(decimalString(diagnostics.lastAccelerationRateMultiplier)), v \(decimalString(diagnostics.lastAccelerationVelocity)) -> \(decimalString(diagnostics.lastAccelerationAdjustedVelocity))"
         movementReportCountLabel.stringValue = "\(diagnostics.movementReportsQueued) queued / \(diagnostics.movementReportsSent) sent"
         hostReportCountLabel.stringValue = "\(diagnostics.hostReportsAccepted) accepted / \(diagnostics.hostReportsIgnored) ignored (\(ignoreReasonString(diagnostics.lastHostIgnoreReason)))"
         queueLabel.stringValue = "\(diagnostics.outgoingQueueDepth)"
@@ -2248,7 +2359,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
     private var debugTimer: Timer?
     private var previousDebugHostCursor: RuntimeCursor?
     private var previousDebugDiagnostics: RuntimeDiagnostics?
-    private let debugLogVersion = 5
+    private let debugLogVersion = 6
     private let debugLogDateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -2406,11 +2517,12 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         }
 
         let initialHostCursor = currentCursor(reportedScreenOverride: options.reportedScreenOverride)
-        let localMouse = configReader.currentConfig()
 
         if device == nil {
             device = locator.findRuntimeDevice()
         }
+
+        let localMouse = configReader.currentConfig(screenHopperDevice: device)
 
         guard let device else {
             let message = locator.disconnectedMessage
@@ -2549,6 +2661,12 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
                 "last_prediction_applied": diagnostics.lastPredictionApplied,
                 "last_cursor_placement_report": diagnostics.lastCursorPlacementReport,
             ],
+            "acceleration": [
+                "delta_us": Int(diagnostics.lastAccelerationDeltaUS),
+                "rate_multiplier": diagnostics.lastAccelerationRateMultiplier,
+                "velocity": diagnostics.lastAccelerationVelocity,
+                "adjusted_velocity": diagnostics.lastAccelerationAdjustedVelocity,
+            ],
             "queue": [
                 "depth": Int(diagnostics.outgoingQueueDepth),
                 "movement_queued": Int(diagnostics.movementReportsQueued),
@@ -2651,6 +2769,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
             "frame_rate": mouse.frameRate,
             "fixed_multiplier": mouse.fixedMultiplier,
             "placement_tolerance": mouse.placementTolerance,
+            "report_rate": mouse.reportRate,
         ]
     }
 
@@ -2698,7 +2817,7 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
         }
 
         do {
-            let config = configReader.currentConfig()
+            let config = configReader.currentConfig(screenHopperDevice: device)
             if config != lastConfig {
                 try device.sendMouseConfig(config)
                 lastConfig = config
@@ -3030,6 +3149,11 @@ private func parseOptions() -> Options {
         case "--placement-tolerance":
             if let value = takeValue(after: index), let parsed = Double(value) {
                 options.placementTolerance = parsed
+                index += 1
+            }
+        case "--report-rate":
+            if let value = takeValue(after: index), let parsed = Double(value), parsed >= 0 {
+                options.reportRate = parsed
                 index += 1
             }
         case "--poll-interval":

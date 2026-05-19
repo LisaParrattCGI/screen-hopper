@@ -46,12 +46,13 @@ def screen_coord(value):
 def mouse_config_payload(config):
     mouse_config = {**DEFAULT_MOUSE_CONFIG, **(config.get("mouse", {}) or {})}
     return struct.pack(
-        "<5L",
+        "<6L",
         fixed16(mouse_config["tracking_speed"]),
         fixed16(mouse_config["pointer_resolution"]),
         fixed16(mouse_config["frame_rate"]),
         fixed16(mouse_config["fixed_multiplier"]),
         fixed16(mouse_config["placement_tolerance"]),
+        fixed16(mouse_config["report_rate"]),
     )
 
 

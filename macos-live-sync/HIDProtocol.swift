@@ -2,7 +2,7 @@ import Foundation
 
 let vendorID = 0xCAFE
 let productID = 0xBAF3
-let configVersion: UInt8 = 7
+let configVersion: UInt8 = 8
 let configSize = 60
 let configReportID: CFIndex = 100
 let runtimeSize = 60

@@ -46,12 +46,13 @@ def from_screen_coord(value):
 def mouse_config_payload(config):
     mouse_config = {**DEFAULT_MOUSE_CONFIG, **(config or {})}
     return struct.pack(
-        "<5L",
+        "<6L",
         fixed16(mouse_config["tracking_speed"]),
         fixed16(mouse_config["pointer_resolution"]),
         fixed16(mouse_config["frame_rate"]),
         fixed16(mouse_config["fixed_multiplier"]),
         fixed16(mouse_config["placement_tolerance"]),
+        fixed16(mouse_config["report_rate"]),
     )
 
 
@@ -81,13 +82,14 @@ def decode_mouse_config(values):
         "frame_rate": from_fixed16(values[2]),
         "fixed_multiplier": from_fixed16(values[3]),
         "placement_tolerance": from_fixed16(values[4]),
+        "report_rate": from_fixed16(values[5]),
     }
 
 
 def get_status(device):
     send_command(device, GET_STATUS)
     payload = read_feature(device)
-    x, y, active_screen, placement_active, placement_anchor_pending, *mouse_values = struct.unpack_from("<qqbBB5L", payload)
+    x, y, active_screen, placement_active, placement_anchor_pending, *mouse_values = struct.unpack_from("<qqbBB6L", payload)
     return {
         "cursor": {
             "x": from_screen_coord(x),

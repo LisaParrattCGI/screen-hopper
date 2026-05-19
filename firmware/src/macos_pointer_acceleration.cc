@@ -179,6 +179,47 @@ double accelerated_magnitude(double velocity, const macos_pointer_acceleration_s
     return macos_curve_value(curve, standardized) * MACOS_CURSOR_SCALE;
 }
 
+uint32_t elapsed_us(uint64_t current, uint64_t previous) {
+    uint64_t delta = current >= previous ? current - previous : 0;
+    if (delta > (uint64_t) std::numeric_limits<uint32_t>::max()) {
+        return std::numeric_limits<uint32_t>::max();
+    }
+    return (uint32_t) delta;
+}
+
+double rate_multiplier(const macos_pointer_acceleration_settings_t& settings, macos_pointer_acceleration_state_t& state, uint64_t timestamp_us) {
+    double multiplier = 1.0;
+    uint32_t delta_us = 0;
+
+    if (settings.report_rate > 0.0 && state.has_last_timestamp) {
+        delta_us = elapsed_us(timestamp_us, state.last_timestamp_us);
+        if (delta_us != 0) {
+            double delta_ms = (double) delta_us / 1000.0;
+            double period_ms = 1000.0 / settings.report_rate;
+            if (delta_ms < period_ms) {
+                delta_ms = period_ms;
+            }
+            multiplier = period_ms / delta_ms;
+        }
+    }
+
+    state.has_last_timestamp = true;
+    state.last_timestamp_us = timestamp_us;
+    state.last_delta_us = delta_us;
+    state.last_rate_multiplier = multiplier;
+    return multiplier;
+}
+
+macos_delta_t apply_macos_acceleration_with_adjusted_velocity(int64_t dx, int64_t dy, double adjusted, macos_pointer_acceleration_settings_t const& settings) {
+    double raw_dx = (double) dx;
+    double raw_dy = (double) dy;
+    double multiplier = accelerated_magnitude(adjusted, settings) / adjusted;
+    return (macos_delta_t) {
+        .dx = raw_dx * multiplier,
+        .dy = raw_dy * multiplier,
+    };
+}
+
 }  // namespace
 
 int16_t macos_max_first_segment_raw_delta(const macos_pointer_acceleration_settings_t& settings) {
@@ -215,9 +256,27 @@ macos_delta_t apply_macos_acceleration(int64_t dx, int64_t dy, const macos_point
     velocity = std::max(velocity, MACOS_VELOCITY_FLOOR);
 
     double adjusted = adjusted_velocity(velocity, settings);
-    double multiplier = accelerated_magnitude(adjusted, settings) / adjusted;
-    return (macos_delta_t) {
-        .dx = raw_dx * multiplier,
-        .dy = raw_dy * multiplier,
-    };
+    return apply_macos_acceleration_with_adjusted_velocity(dx, dy, adjusted, settings);
+}
+
+void reset_macos_acceleration_state(macos_pointer_acceleration_state_t& state) {
+    state = {};
+    state.last_rate_multiplier = 1.0;
+}
+
+macos_delta_t apply_macos_acceleration(int64_t dx, int64_t dy, const macos_pointer_acceleration_settings_t& settings, macos_pointer_acceleration_state_t& state, uint64_t timestamp_us) {
+    if (dx == 0 && dy == 0) {
+        return (macos_delta_t) { .dx = 0.0, .dy = 0.0 };
+    }
+
+    double raw_dx = (double) dx;
+    double raw_dy = (double) dy;
+    double velocity = std::floor(std::sqrt(raw_dx * raw_dx + raw_dy * raw_dy));
+    double multiplier = rate_multiplier(settings, state, timestamp_us);
+    double adjusted = velocity * (settings.fixed_multiplier == 1.0 ? multiplier : settings.fixed_multiplier);
+    adjusted = std::max(adjusted, MACOS_VELOCITY_FLOOR);
+
+    state.last_velocity = velocity;
+    state.last_adjusted_velocity = adjusted;
+    return apply_macos_acceleration_with_adjusted_velocity(dx, dy, adjusted, settings);
 }

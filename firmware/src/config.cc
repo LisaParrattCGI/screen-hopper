@@ -30,6 +30,7 @@ macos_mouse_config_t persistent_mouse_config = {
     .frame_rate = 4390912,
     .fixed_multiplier = 65536,
     .placement_tolerance = 32768,
+    .report_rate = 0,
 };
 
 bool checksum_ok(const uint8_t* buffer, uint16_t data_size) {
@@ -95,7 +96,13 @@ void apply_mouse_config(const macos_mouse_config_t* config) {
         macos_pointer_acceleration.fixed_multiplier = 1.0 / MOUSE_CONFIG_SCALE;
     }
 
+    macos_pointer_acceleration.report_rate = fixed16_to_double(config->report_rate);
+    if (macos_pointer_acceleration.report_rate < 0.0) {
+        macos_pointer_acceleration.report_rate = 0.0;
+    }
+
     macos_placement_tolerance = fixed16_to_double(config->placement_tolerance);
+    reset_pointer_acceleration_state();
 }
 
 void fill_mouse_config(macos_mouse_config_t* config) {
@@ -104,6 +111,7 @@ void fill_mouse_config(macos_mouse_config_t* config) {
     config->frame_rate = double_to_fixed16(macos_pointer_acceleration.frame_rate);
     config->fixed_multiplier = double_to_fixed16(macos_pointer_acceleration.fixed_multiplier);
     config->placement_tolerance = double_to_fixed16(macos_placement_tolerance);
+    config->report_rate = double_to_fixed16(macos_pointer_acceleration.report_rate);
 }
 
 void fill_runtime_status(runtime_status_t* status) {

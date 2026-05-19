@@ -6,7 +6,7 @@
 #define SCREEN_HOPPER_VENDOR_ID 0xCAFE
 #define SCREEN_HOPPER_PRODUCT_ID 0xBAF3
 
-#define CONFIG_VERSION 7
+#define CONFIG_VERSION 8
 #define CONFIG_SIZE 60
 #define RUNTIME_SIZE 60
 
@@ -122,6 +122,7 @@ struct __attribute__((packed)) macos_mouse_config_t {
     uint32_t frame_rate;
     uint32_t fixed_multiplier;
     uint32_t placement_tolerance;
+    uint32_t report_rate;
 };
 
 struct __attribute__((packed)) persist_config_t {
@@ -251,6 +252,10 @@ struct __attribute__((packed)) runtime_diagnostics_t {
     int64_t total_predicted_dy;
     int64_t total_host_correction_x;
     int64_t total_host_correction_y;
+    uint32_t last_acceleration_delta_us;
+    uint32_t last_acceleration_rate_multiplier;
+    uint32_t last_acceleration_velocity;
+    uint32_t last_acceleration_adjusted_velocity;
 };
 
 static_assert(sizeof(runtime_status_t) <= RUNTIME_GET_PAYLOAD_SIZE, "runtime status must fit in one feature report");
