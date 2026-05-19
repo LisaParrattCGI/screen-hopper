@@ -562,8 +562,17 @@ private final class DeviceLocator {
     }
 
     private func isRuntimeCollection(_ device: IOHIDDevice) -> Bool {
-        intProperty(device, kIOHIDPrimaryUsagePageKey as CFString) == runtimeUsagePage &&
-            intProperty(device, kIOHIDPrimaryUsageKey as CFString) == runtimeUsage
+        if intProperty(device, kIOHIDPrimaryUsagePageKey as CFString) == runtimeUsagePage &&
+            intProperty(device, kIOHIDPrimaryUsageKey as CFString) == runtimeUsage {
+            return true
+        }
+
+        // macOS may expose the composite descriptor as a mouse-primary collection
+        // while still allowing the vendor-defined runtime feature report on it.
+        guard let maxFeatureSize = intProperty(device, "MaxFeatureReportSize" as CFString) else {
+            return false
+        }
+        return maxFeatureSize >= runtimeSize
     }
 
     private func intProperty(_ device: IOHIDDevice, _ key: CFString) -> Int? {
