@@ -534,13 +534,47 @@ private final class DeviceLocator {
 
     func printDescriptorSummaryForDebug() {
         guard let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else {
-            print("screen_hopper_hid_collections: unavailable")
+            printJSONLine([
+                "version": 1,
+                "event": "usb_descriptor_summary",
+                "error": "IOHIDManagerCopyDevices unavailable",
+                "devices": [],
+            ])
             fflush(stdout)
             return
         }
 
-        print(descriptorSummary(devices.sorted { deviceSummary($0) < deviceSummary($1) }))
+        printJSONLine([
+            "version": 1,
+            "event": "usb_descriptor_summary",
+            "devices": descriptorJSON(devices.sorted { deviceSummary($0) < deviceSummary($1) }),
+        ])
         fflush(stdout)
+    }
+
+    private func descriptorJSON(_ devices: [IOHIDDevice]) -> [[String: Any]] {
+        devices.enumerated().map { index, device in
+            let descriptor = reportDescriptorData(device)
+            return [
+                "index": index,
+                "product": stringProperty(device, kIOHIDProductKey as CFString) ?? "unknown",
+                "manufacturer": stringProperty(device, kIOHIDManufacturerKey as CFString) ?? "unknown",
+                "transport": stringProperty(device, kIOHIDTransportKey as CFString) ?? "unknown",
+                "vendor_id": intProperty(device, kIOHIDVendorIDKey as CFString) as Any,
+                "product_id": intProperty(device, kIOHIDProductIDKey as CFString) as Any,
+                "bcd_device": intProperty(device, kIOHIDVersionNumberKey as CFString) as Any,
+                "location_id": intProperty(device, kIOHIDLocationIDKey as CFString) as Any,
+                "usage_page": intProperty(device, kIOHIDPrimaryUsagePageKey as CFString) as Any,
+                "usage": intProperty(device, kIOHIDPrimaryUsageKey as CFString) as Any,
+                "max_input": intProperty(device, kIOHIDMaxInputReportSizeKey as CFString) as Any,
+                "max_output": intProperty(device, kIOHIDMaxOutputReportSizeKey as CFString) as Any,
+                "max_feature": intProperty(device, "MaxFeatureReportSize" as CFString) as Any,
+                "report_descriptor": descriptorJSON(descriptor),
+                "runtime_candidate": isRuntimeCollection(device),
+                "descriptor_problems": descriptorDiagnostics(descriptor),
+                "elements": elementJSON(device),
+            ]
+        }
     }
 
     private func descriptorSummary(_ devices: [IOHIDDevice]) -> String {
@@ -626,6 +660,19 @@ private final class DeviceLocator {
         return "len=\(data.count) crc32=\(String(format: "0x%08X", CRC32.compute(data)))"
     }
 
+    private func descriptorJSON(_ data: Data?) -> [String: Any] {
+        guard let data else {
+            return [
+                "available": false,
+            ]
+        }
+        return [
+            "available": true,
+            "length": data.count,
+            "crc32": CRC32.compute(data),
+        ]
+    }
+
     private func descriptorDiagnostics(_ data: Data?) -> [String] {
         guard let data else {
             return ["report descriptor bytes unavailable from IOHID"]
@@ -643,6 +690,80 @@ private final class DeviceLocator {
             )
         }
         return problems
+    }
+
+    private func elementJSON(_ device: IOHIDDevice) -> [String: Any] {
+        guard let elements = IOHIDDeviceCopyMatchingElements(device, nil, IOOptionBits(kIOHIDOptionsTypeNone)) as? [IOHIDElement] else {
+            return [
+                "available": false,
+            ]
+        }
+
+        let sortedElements = elements.sorted { left, right in
+            let leftKey = elementSortKey(left)
+            let rightKey = elementSortKey(right)
+            return leftKey.lexicographicallyPrecedes(rightKey)
+        }
+
+        let reportGroups = Dictionary(grouping: sortedElements) { element in
+            "\(reportTypeString(reportType(for: element))):\(IOHIDElementGetReportID(element))"
+        }
+        let reports = reportGroups.keys.sorted().map { key -> [String: Any] in
+            let group = reportGroups[key] ?? []
+            let parts = key.split(separator: ":", maxSplits: 1).map(String.init)
+            let summedElementBits = group.reduce(0) { total, element in
+                total + IOHIDElementGetReportSize(element)
+            }
+            let maxElementBits = group.map(IOHIDElementGetReportSize).max() ?? 0
+            return [
+                "report_type": parts.first ?? "unknown",
+                "report_id": Int(parts.dropFirst().first ?? "0") ?? 0,
+                "elements": group.count,
+                "summed_element_bits": summedElementBits,
+                "max_element_bits": maxElementBits,
+            ]
+        }
+
+        let interestingElements = sortedElements.compactMap { element -> [String: Any]? in
+            let reportID = IOHIDElementGetReportID(element)
+            let reportType = reportType(for: element)
+            let usagePage = IOHIDElementGetUsagePage(element)
+            let usage = IOHIDElementGetUsage(element)
+            guard reportType == kIOHIDReportTypeFeature ||
+                reportID == UInt32(runtimeReportID) ||
+                reportID == UInt32(configReportID) ||
+                usagePage == runtimeUsagePage ||
+                usagePage == configUsagePage else {
+                return nil
+            }
+
+            var problems: [String] = []
+            if reportType == kIOHIDReportTypeFeature &&
+                (reportID == UInt32(runtimeReportID) || reportID == UInt32(configReportID)) &&
+                IOHIDElementGetLogicalMax(element) < 255 {
+                problems.append("byte payload feature report has logical_max < 255")
+            }
+
+            return [
+                "element_type": elementTypeString(IOHIDElementGetType(element)),
+                "report_type": reportTypeString(reportType),
+                "report_id": Int(reportID),
+                "usage_page": Int(usagePage),
+                "usage": Int(usage),
+                "size_bits": IOHIDElementGetReportSize(element),
+                "count": IOHIDElementGetReportCount(element),
+                "logical_min": IOHIDElementGetLogicalMin(element),
+                "logical_max": IOHIDElementGetLogicalMax(element),
+                "problems": problems,
+            ]
+        }
+
+        return [
+            "available": true,
+            "count": sortedElements.count,
+            "reports": reports,
+            "interesting": interestingElements,
+        ]
     }
 
     private func elementSummary(_ device: IOHIDDevice) -> [String] {
@@ -2556,6 +2677,13 @@ private func hex(_ value: Int?) -> String {
         return "unknown"
     }
     return String(format: "0x%X", value)
+}
+
+private func printJSONLine(_ value: [String: Any]) {
+    if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+       let line = String(data: data, encoding: .utf8) {
+        print(line)
+    }
 }
 
 private func briefError(_ error: Error) -> String {
