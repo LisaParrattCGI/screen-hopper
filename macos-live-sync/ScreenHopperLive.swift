@@ -432,6 +432,10 @@ private final class ScreenHopperDevice {
 }
 
 private final class DeviceLocator {
+    private let staleDescriptorLength = 313
+    private let staleDescriptorCRC32: UInt32 = 0x8786_FAA1
+    private let expectedDescriptorLength = 323
+    private let expectedDescriptorCRC32: UInt32 = 0x12DC_8B82
     private let manager: IOHIDManager
     private var lastProbeError: String?
     private var lastDescriptorSummary: String = ""
@@ -547,6 +551,7 @@ private final class DeviceLocator {
         var lines = ["screen_hopper_hid_collections:"]
         for (index, device) in devices.enumerated() {
             let descriptor = reportDescriptorData(device)
+            let descriptorProblems = descriptorDiagnostics(descriptor)
             lines.append(
                 [
                     "  [\(index)]",
@@ -565,6 +570,7 @@ private final class DeviceLocator {
                     "runtime_candidate=\(isRuntimeCollection(device) ? "yes" : "no")",
                 ].joined(separator: " ")
             )
+            lines.append(contentsOf: descriptorProblems.map { "    descriptor_problem: \($0)" })
             lines.append(contentsOf: elementSummary(device).map { "    \($0)" })
         }
         return lines.joined(separator: "\n")
@@ -619,6 +625,25 @@ private final class DeviceLocator {
         return "len=\(data.count) crc32=\(String(format: "0x%08X", CRC32.compute(data)))"
     }
 
+    private func descriptorDiagnostics(_ data: Data?) -> [String] {
+        guard let data else {
+            return ["report descriptor bytes unavailable from IOHID"]
+        }
+
+        let crc = CRC32.compute(data)
+        var problems: [String] = []
+        if data.count == staleDescriptorLength && crc == staleDescriptorCRC32 {
+            problems.append(
+                "stale pre-byte-range descriptor; expected len=\(expectedDescriptorLength) crc32=\(String(format: "0x%08X", expectedDescriptorCRC32)); reflash firmware and re-enumerate USB"
+            )
+        } else if data.count != expectedDescriptorLength || crc != expectedDescriptorCRC32 {
+            problems.append(
+                "descriptor differs from this app's expected firmware: expected len=\(expectedDescriptorLength) crc32=\(String(format: "0x%08X", expectedDescriptorCRC32))"
+            )
+        }
+        return problems
+    }
+
     private func elementSummary(_ device: IOHIDDevice) -> [String] {
         guard let elements = IOHIDDeviceCopyMatchingElements(device, nil, IOOptionBits(kIOHIDOptionsTypeNone)) as? [IOHIDElement] else {
             return ["elements: unavailable"]
@@ -639,11 +664,11 @@ private final class DeviceLocator {
         }
         for key in reportGroups.keys.sorted() {
             let group = reportGroups[key] ?? []
-            let bits = group.reduce(0) { total, element in
-                total + IOHIDElementGetReportSize(element) * IOHIDElementGetReportCount(element)
+            let summedElementBits = group.reduce(0) { total, element in
+                total + IOHIDElementGetReportSize(element)
             }
-            let bytes = (bits + 7) / 8
-            lines.append("report \(key) elements=\(group.count) bits=\(bits) bytes=\(bytes)")
+            let maxElementBits = group.map(IOHIDElementGetReportSize).max() ?? 0
+            lines.append("report \(key) elements=\(group.count) summed_element_bits=\(summedElementBits) max_element_bits=\(maxElementBits)")
         }
 
         for element in sortedElements {
@@ -670,6 +695,13 @@ private final class DeviceLocator {
                         "logical_max=\(IOHIDElementGetLogicalMax(element))",
                     ].joined(separator: " ")
                 )
+                if reportType == kIOHIDReportTypeFeature &&
+                    (reportID == UInt32(runtimeReportID) || reportID == UInt32(configReportID)) &&
+                    IOHIDElementGetLogicalMax(element) < 255 {
+                    lines.append(
+                        "descriptor_problem: feature report id=\(reportID) logical_max=\(IOHIDElementGetLogicalMax(element)) but byte payloads require logical_max=255"
+                    )
+                }
             }
         }
 
