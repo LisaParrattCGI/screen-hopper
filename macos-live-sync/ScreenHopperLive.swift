@@ -164,8 +164,17 @@ private final class ScreenHopperDevice {
     }
 
     func fetchStatus() throws -> RuntimeStatus {
-        try requestStatus()
+        do {
+            try requestStatus()
+        } catch {
+            // The firmware defaults runtime GetReport to status, so a read-only
+            // status fetch still works when macOS refuses runtime SetReport.
+        }
         let payload = try readStatusPayload()
+        return decodeStatusPayload(payload)
+    }
+
+    private func decodeStatusPayload(_ payload: Data) -> RuntimeStatus {
         return RuntimeStatus(
             cursor: RuntimeCursor(
                 x: payload.readInt64LE(at: 0),
@@ -391,7 +400,12 @@ private final class ScreenHopperDevice {
         }
 
         guard result == kIOReturnSuccess else {
-            throw LiveSyncError.hidSetReportFailed(result)
+            throw LiveSyncError.hidSetReportFailed(
+                reportID: reportID,
+                length: report.count,
+                includesReportID: mode.writeIncludesReportID,
+                code: result
+            )
         }
     }
 
@@ -408,7 +422,7 @@ private final class ScreenHopperDevice {
         }
 
         guard result == kIOReturnSuccess else {
-            throw LiveSyncError.hidGetReportFailed(result)
+            throw LiveSyncError.hidGetReportFailed(reportID: reportID, length: length, code: result)
         }
 
         report = report.prefix(reportLength)
@@ -517,7 +531,6 @@ private final class DeviceLocator {
     }
 
     private func probe(_ candidate: ScreenHopperDevice) throws {
-        try candidate.requestStatus()
         _ = try candidate.readStatusPayload()
     }
 
@@ -2299,9 +2312,15 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
 
         do {
             let status = try device.fetchStatus()
-            let diagnostics = try device.fetchDiagnostics()
-            debugWindow.update(host: hostCursor, localMouse: localMouse, device: status, diagnostics: diagnostics, error: nil)
-            logDebugSample(host: hostCursor, localMouse: localMouse, status: status, diagnostics: diagnostics)
+            do {
+                let diagnostics = try device.fetchDiagnostics()
+                debugWindow.update(host: hostCursor, localMouse: localMouse, device: status, diagnostics: diagnostics, error: nil)
+                logDebugSample(host: hostCursor, localMouse: localMouse, status: status, diagnostics: diagnostics)
+            } catch {
+                let message = "Screen Hopper diagnostics: \(briefError(error))"
+                debugWindow.update(host: hostCursor, localMouse: localMouse, device: status, diagnostics: nil, error: message)
+                logDebugStatusSample(host: hostCursor, localMouse: localMouse, status: status, warning: message)
+            }
         } catch {
             self.device = nil
             let message = "Screen Hopper: \(briefError(error))"
@@ -2330,6 +2349,40 @@ private final class LiveSyncApp: NSObject, NSApplicationDelegate {
            let line = String(data: data, encoding: .utf8) {
             print(line)
         }
+        fflush(stdout)
+    }
+
+    private func logDebugStatusSample(host: RuntimeCursor, localMouse: MouseConfig, status: RuntimeStatus, warning: String) {
+        let hostDeltaX = previousDebugHostCursor.map { host.x - $0.x } ?? 0
+        let hostDeltaY = previousDebugHostCursor.map { host.y - $0.y } ?? 0
+        previousDebugHostCursor = host
+
+        let sample: [String: Any] = [
+            "version": debugLogVersion,
+            "event": "debug_status",
+            "timestamp": debugLogDateFormatter.string(from: Date()),
+            "warning": warning,
+            "host": [
+                "x": debugCoordinateValue(host.x),
+                "y": debugCoordinateValue(host.y),
+                "delta_x": debugCoordinateValue(hostDeltaX),
+                "delta_y": debugCoordinateValue(hostDeltaY),
+                "reported_screen": debugScreenValue(host.activeScreen),
+            ],
+            "hopper": [
+                "x": debugCoordinateValue(status.cursor.x),
+                "y": debugCoordinateValue(status.cursor.y),
+                "active_screen": debugScreenValue(status.cursor.activeScreen),
+                "placement_active": status.placementActive,
+                "placement_anchor_pending": status.placementAnchorPending,
+            ],
+            "mouse": [
+                "local": debugMouseConfig(localMouse),
+                "hopper": debugMouseConfig(status.mouse),
+            ],
+        ]
+
+        printJSONLine(sample)
         fflush(stdout)
     }
 
@@ -2612,8 +2665,8 @@ private func makeFrogStatusIcon() -> NSImage {
 
 private enum LiveSyncError: Error, CustomStringConvertible, LocalizedError {
     case payloadTooLarge
-    case hidSetReportFailed(IOReturn)
-    case hidGetReportFailed(IOReturn)
+    case hidSetReportFailed(reportID: CFIndex, length: Int, includesReportID: Bool, code: IOReturn)
+    case hidGetReportFailed(reportID: CFIndex, length: Int, code: IOReturn)
     case incompatibleConfigVersion(UInt8)
     case invalidReport
     case invalidCRC
@@ -2688,10 +2741,11 @@ private func printJSONLine(_ value: [String: Any]) {
 
 private func briefError(_ error: Error) -> String {
     switch error {
-    case LiveSyncError.hidSetReportFailed(let code):
-        return "set report failed \(hex(code)) (\(code))"
-    case LiveSyncError.hidGetReportFailed(let code):
-        return "get report failed \(hex(code)) (\(code))"
+    case LiveSyncError.hidSetReportFailed(let reportID, let length, let includesReportID, let code):
+        let framing = includesReportID ? "with report id byte" : "without report id byte"
+        return "set report id \(reportID) length \(length) \(framing) failed \(hex(code))"
+    case LiveSyncError.hidGetReportFailed(let reportID, let length, let code):
+        return "get report id \(reportID) length \(length) failed \(hex(code))"
     case LiveSyncError.incompatibleConfigVersion(let version):
         return "config version \(version) unsupported"
     case LiveSyncError.invalidReport:
