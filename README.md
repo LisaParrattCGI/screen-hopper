@@ -47,10 +47,11 @@ If you can't use the browser-based configuration tool, there's also a [command-l
 ## macOS live sync and configuration
 
 The optional [macOS live sync tool](macos-live-sync) is a menu-bar app that keeps
-Screen Hopper's runtime mouse model aligned with the Mac it is attached to. It
-periodically sends the Mac's cursor position and mouse acceleration parameters
-through the runtime HID report. This helps Screen Hopper predict the same
-desktop cursor position that macOS is using.
+Screen Hopper aligned with the Mac it is attached to. It sends the Mac cursor
+position in that host's local composite-desktop coordinate space through the
+runtime HID report. Screen Hopper stamps the source screen from the USB/forwarder
+path, translates local host coordinates into the configured global screen space,
+and uses that plus edge-directed mouse movement to switch screens.
 
 The same tool also includes a native configuration dialog. It reads the
 persistent configuration report, validates edits, preserves existing mappings,

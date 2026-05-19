@@ -28,20 +28,11 @@ bool runtime_report_ok(const uint8_t* buffer, uint16_t bufsize) {
     return crc32(buffer, RUNTIME_SIZE - 4) == expected_crc;
 }
 
-void send_forwarder_cursor_report(const runtime_cursor_t& cursor) {
+void send_forwarder_cursor_report(const runtime_host_cursor_t& cursor) {
     forwarder_cursor_report_t msg = {
         .report_id = FORWARDER_CONTROL_REPORT_ID,
         .command = FORWARDER_CONTROL_SET_HOST_CURSOR,
         .cursor = cursor,
-    };
-    serial_write((const uint8_t*) &msg, sizeof(msg), FORWARDER_UART);
-}
-
-void send_forwarder_mouse_config_report(const macos_mouse_config_t& mouse_config) {
-    forwarder_mouse_config_report_t msg = {
-        .report_id = FORWARDER_CONTROL_REPORT_ID,
-        .command = FORWARDER_CONTROL_SET_MOUSE_CONFIG,
-        .mouse_config = mouse_config,
     };
     serial_write((const uint8_t*) &msg, sizeof(msg), FORWARDER_UART);
 }
@@ -121,19 +112,15 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
     last_runtime_command = runtime_buffer->command;
     switch (runtime_buffer->command) {
         case RuntimeCommand::SET_HOST_CURSOR: {
-            runtime_cursor_t cursor;
+            runtime_host_cursor_t cursor;
             memcpy(&cursor, runtime_buffer->data, sizeof(cursor));
-            cursor.active_screen = 1;
-            runtime_diagnostics.last_host_cursor = cursor;
+            runtime_diagnostics.last_host_cursor = (runtime_cursor_t) {
+                .x = cursor.x,
+                .y = cursor.y,
+                .active_screen = 1,
+            };
             runtime_diagnostics.host_reports_accepted++;
             send_forwarder_cursor_report(cursor);
-            last_runtime_command = RuntimeCommand::GET_STATUS;
-            break;
-        }
-        case RuntimeCommand::SET_MOUSE_CONFIG: {
-            macos_mouse_config_t mouse_config;
-            memcpy(&mouse_config, runtime_buffer->data, sizeof(mouse_config));
-            send_forwarder_mouse_config_report(mouse_config);
             last_runtime_command = RuntimeCommand::GET_STATUS;
             break;
         }

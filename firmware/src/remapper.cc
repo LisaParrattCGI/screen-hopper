@@ -109,6 +109,26 @@ void aggregate_relative(uint8_t* prev_report, const uint8_t* report, uint8_t rep
 
 const int64_t EDGE_INTENT_MARGIN = 8 * SCREEN_COORD_SCALE;
 const uint64_t HOST_CURSOR_FRESH_US = 2000000;
+const uint8_t EDGE_PUSH_IDLE = 0;
+const uint8_t EDGE_PUSH_NO_ACTIVE_SCREEN = 1;
+const uint8_t EDGE_PUSH_NO_MOVEMENT = 2;
+const uint8_t EDGE_PUSH_NO_HOST_CURSOR = 3;
+const uint8_t EDGE_PUSH_STALE_HOST_CURSOR = 4;
+const uint8_t EDGE_PUSH_NOT_AT_EDGE = 5;
+const uint8_t EDGE_PUSH_NO_TARGET = 6;
+const uint8_t EDGE_PUSH_SWITCHED = 7;
+const uint8_t EDGE_PUSH_MANUAL_SWITCH = 8;
+const int8_t EDGE_AXIS_NONE = 0;
+const int8_t EDGE_AXIS_X = 1;
+const int8_t EDGE_AXIS_Y = 2;
+
+struct edge_check_t {
+    bool target_found;
+    uint8_t state;
+    int8_t target_screen;
+    int64_t distance_to_edge;
+    int64_t gap_to_target;
+};
 
 int16_t clamp_relative_axis(int64_t value) {
     if (value > std::numeric_limits<int16_t>::max()) {
@@ -285,19 +305,12 @@ void forwarder_serial_callback(const uint8_t* data, uint16_t len) {
         case FORWARDER_CONTROL_SET_HOST_CURSOR: {
             if (len == sizeof(forwarder_cursor_report_t)) {
                 const forwarder_cursor_report_t* msg = (const forwarder_cursor_report_t*) data;
-                runtime_cursor_t cursor;
-                memcpy(&cursor, &msg->cursor, sizeof(cursor));
-                cursor.active_screen = 1;
+                runtime_cursor_t cursor = {
+                    .x = msg->cursor.x,
+                    .y = msg->cursor.y,
+                    .active_screen = 1,
+                };
                 set_cursor_from_host(cursor);
-            }
-            break;
-        }
-        case FORWARDER_CONTROL_SET_MOUSE_CONFIG: {
-            if (len == sizeof(forwarder_mouse_config_report_t)) {
-                const forwarder_mouse_config_report_t* msg = (const forwarder_mouse_config_report_t*) data;
-                macos_mouse_config_t mouse_config;
-                memcpy(&mouse_config, &msg->mouse_config, sizeof(mouse_config));
-                apply_mouse_config(&mouse_config);
             }
             break;
         }
@@ -455,6 +468,36 @@ bool host_cursor_is_fresh(int8_t screen) {
     return age <= HOST_CURSOR_FRESH_US;
 }
 
+uint32_t diagnostic_host_age_ms(int8_t screen) {
+    if (!valid_screen_index(screen) || !host_cursor_valid[screen]) {
+        return std::numeric_limits<uint32_t>::max();
+    }
+
+    uint64_t age_ms = (time_us_64() - host_cursor_received_us[screen]) / 1000;
+    if (age_ms > std::numeric_limits<uint32_t>::max()) {
+        return std::numeric_limits<uint32_t>::max();
+    }
+    return (uint32_t) age_ms;
+}
+
+void set_edge_push_diagnostics(uint8_t state,
+                               int8_t source_screen,
+                               int8_t target_screen,
+                               int8_t axis,
+                               int8_t direction,
+                               int64_t distance_to_edge,
+                               int64_t gap_to_target) {
+    runtime_diagnostics.edge_push_state = state;
+    runtime_diagnostics.edge_push_source_screen = source_screen;
+    runtime_diagnostics.edge_push_target_screen = target_screen;
+    runtime_diagnostics.edge_push_axis = axis;
+    runtime_diagnostics.edge_push_direction = direction;
+    runtime_diagnostics.edge_push_host_age_ms = diagnostic_host_age_ms(source_screen);
+    runtime_diagnostics.edge_push_margin = clamp_diagnostic_delta(EDGE_INTENT_MARGIN);
+    runtime_diagnostics.edge_push_distance_to_edge = clamp_diagnostic_delta(distance_to_edge);
+    runtime_diagnostics.edge_push_gap_to_target = clamp_diagnostic_delta(gap_to_target);
+}
+
 bool vertical_overlap(const screen_def_t& a, const screen_def_t& b) {
     int64_t top = std::max((int64_t) a.y, (int64_t) b.y);
     int64_t bottom = std::min((int64_t) a.y + a.h, (int64_t) b.y + b.h);
@@ -467,21 +510,24 @@ bool horizontal_overlap(const screen_def_t& a, const screen_def_t& b) {
     return left < right;
 }
 
-bool find_horizontal_edge_target(int direction, int8_t& target_screen) {
-    if (!valid_screen_index(active_screen) || direction == 0) {
-        return false;
+edge_check_t check_horizontal_edge_target(int direction) {
+    if (!valid_screen_index(active_screen)) {
+        return { false, EDGE_PUSH_NO_ACTIVE_SCREEN, -1, -1, -1 };
+    }
+    if (direction == 0) {
+        return { false, EDGE_PUSH_NO_MOVEMENT, -1, -1, -1 };
     }
 
     const screen_def_t& current = screens[active_screen];
-    if (direction < 0 && cursor_x > (int64_t) current.x + EDGE_INTENT_MARGIN) {
-        return false;
-    }
-    if (direction > 0 && cursor_x < (int64_t) current.x + current.w - 1 - EDGE_INTENT_MARGIN) {
-        return false;
+    int64_t distance_to_edge = direction < 0
+                                   ? cursor_x - (int64_t) current.x
+                                   : (int64_t) current.x + current.w - 1 - cursor_x;
+    if (distance_to_edge > EDGE_INTENT_MARGIN) {
+        return { false, EDGE_PUSH_NOT_AT_EDGE, -1, distance_to_edge, -1 };
     }
 
     int64_t best_gap = std::numeric_limits<int64_t>::max();
-    bool found = false;
+    int8_t target_screen = -1;
     for (int8_t i = 0; i < NSCREENS; i++) {
         if (i == active_screen) {
             continue;
@@ -509,27 +555,33 @@ bool find_horizontal_edge_target(int direction, int8_t& target_screen) {
         if (gap < best_gap) {
             best_gap = gap;
             target_screen = i;
-            found = true;
         }
     }
-    return found;
+
+    if (target_screen < 0) {
+        return { false, EDGE_PUSH_NO_TARGET, -1, distance_to_edge, -1 };
+    }
+    return { true, EDGE_PUSH_SWITCHED, target_screen, distance_to_edge, best_gap };
 }
 
-bool find_vertical_edge_target(int direction, int8_t& target_screen) {
-    if (!valid_screen_index(active_screen) || direction == 0) {
-        return false;
+edge_check_t check_vertical_edge_target(int direction) {
+    if (!valid_screen_index(active_screen)) {
+        return { false, EDGE_PUSH_NO_ACTIVE_SCREEN, -1, -1, -1 };
+    }
+    if (direction == 0) {
+        return { false, EDGE_PUSH_NO_MOVEMENT, -1, -1, -1 };
     }
 
     const screen_def_t& current = screens[active_screen];
-    if (direction < 0 && cursor_y > (int64_t) current.y + EDGE_INTENT_MARGIN) {
-        return false;
-    }
-    if (direction > 0 && cursor_y < (int64_t) current.y + current.h - 1 - EDGE_INTENT_MARGIN) {
-        return false;
+    int64_t distance_to_edge = direction < 0
+                                   ? cursor_y - (int64_t) current.y
+                                   : (int64_t) current.y + current.h - 1 - cursor_y;
+    if (distance_to_edge > EDGE_INTENT_MARGIN) {
+        return { false, EDGE_PUSH_NOT_AT_EDGE, -1, distance_to_edge, -1 };
     }
 
     int64_t best_gap = std::numeric_limits<int64_t>::max();
-    bool found = false;
+    int8_t target_screen = -1;
     for (int8_t i = 0; i < NSCREENS; i++) {
         if (i == active_screen) {
             continue;
@@ -557,10 +609,13 @@ bool find_vertical_edge_target(int direction, int8_t& target_screen) {
         if (gap < best_gap) {
             best_gap = gap;
             target_screen = i;
-            found = true;
         }
     }
-    return found;
+
+    if (target_screen < 0) {
+        return { false, EDGE_PUSH_NO_TARGET, -1, distance_to_edge, -1 };
+    }
+    return { true, EDGE_PUSH_SWITCHED, target_screen, distance_to_edge, best_gap };
 }
 
 void adopt_screen_cursor_or_center(int8_t screen) {
@@ -577,28 +632,86 @@ void adopt_screen_cursor_or_center(int8_t screen) {
 }
 
 bool maybe_switch_screen_from_edge_intent(int16_t dx, int16_t dy) {
-    if (!valid_screen_index(active_screen) || (dx == 0 && dy == 0) || !host_cursor_is_fresh(active_screen)) {
+    int8_t source_screen = active_screen;
+    if (!valid_screen_index(source_screen)) {
+        set_edge_push_diagnostics(EDGE_PUSH_NO_ACTIVE_SCREEN, source_screen, -1, EDGE_AXIS_NONE, 0, -1, -1);
+        return false;
+    }
+    if (dx == 0 && dy == 0) {
+        set_edge_push_diagnostics(EDGE_PUSH_NO_MOVEMENT, source_screen, -1, EDGE_AXIS_NONE, 0, -1, -1);
         return false;
     }
 
-    int8_t target_screen = -1;
+    runtime_diagnostics.edge_push_attempts++;
+    if (!host_cursor_valid[source_screen]) {
+        set_edge_push_diagnostics(EDGE_PUSH_NO_HOST_CURSOR, source_screen, -1, EDGE_AXIS_NONE, 0, -1, -1);
+        return false;
+    }
+    if (!host_cursor_is_fresh(source_screen)) {
+        set_edge_push_diagnostics(EDGE_PUSH_STALE_HOST_CURSOR, source_screen, -1, EDGE_AXIS_NONE, 0, -1, -1);
+        return false;
+    }
+
+    auto apply_edge_check = [&](const edge_check_t& check, int8_t axis, int8_t direction) {
+        if (!check.target_found) {
+            return false;
+        }
+        adopt_screen_cursor_or_center(check.target_screen);
+        runtime_diagnostics.screen_changes++;
+        runtime_diagnostics.edge_push_switches++;
+        set_edge_push_diagnostics(
+            EDGE_PUSH_SWITCHED,
+            source_screen,
+            check.target_screen,
+            axis,
+            direction,
+            check.distance_to_edge,
+            check.gap_to_target);
+        return true;
+    };
+
     bool x_first = std::abs((int) dx) >= std::abs((int) dy);
+    int8_t x_direction = dx < 0 ? -1 : (dx > 0 ? 1 : 0);
+    int8_t y_direction = dy < 0 ? -1 : (dy > 0 ? 1 : 0);
+    edge_check_t primary = { false, EDGE_PUSH_NO_MOVEMENT, -1, -1, -1 };
+    edge_check_t secondary = { false, EDGE_PUSH_NO_MOVEMENT, -1, -1, -1 };
+
     if (x_first) {
-        if (find_horizontal_edge_target(dx < 0 ? -1 : (dx > 0 ? 1 : 0), target_screen) ||
-            find_vertical_edge_target(dy < 0 ? -1 : (dy > 0 ? 1 : 0), target_screen)) {
-            adopt_screen_cursor_or_center(target_screen);
-            runtime_diagnostics.screen_changes_predicted++;
+        primary = check_horizontal_edge_target(x_direction);
+        if (apply_edge_check(primary, EDGE_AXIS_X, x_direction)) {
+            return true;
+        }
+        secondary = check_vertical_edge_target(y_direction);
+        if (apply_edge_check(secondary, EDGE_AXIS_Y, y_direction)) {
             return true;
         }
     } else {
-        if (find_vertical_edge_target(dy < 0 ? -1 : (dy > 0 ? 1 : 0), target_screen) ||
-            find_horizontal_edge_target(dx < 0 ? -1 : (dx > 0 ? 1 : 0), target_screen)) {
-            adopt_screen_cursor_or_center(target_screen);
-            runtime_diagnostics.screen_changes_predicted++;
+        primary = check_vertical_edge_target(y_direction);
+        if (apply_edge_check(primary, EDGE_AXIS_Y, y_direction)) {
+            return true;
+        }
+        secondary = check_horizontal_edge_target(x_direction);
+        if (apply_edge_check(secondary, EDGE_AXIS_X, x_direction)) {
             return true;
         }
     }
 
+    const edge_check_t& failure = primary.state == EDGE_PUSH_NO_MOVEMENT ? secondary : primary;
+    int8_t axis = x_first ? EDGE_AXIS_X : EDGE_AXIS_Y;
+    int8_t direction = x_first ? x_direction : y_direction;
+    if (failure.state == secondary.state && primary.state == EDGE_PUSH_NO_MOVEMENT) {
+        axis = x_first ? EDGE_AXIS_Y : EDGE_AXIS_X;
+        direction = x_first ? y_direction : x_direction;
+    }
+
+    set_edge_push_diagnostics(
+        failure.state,
+        source_screen,
+        failure.target_screen,
+        axis,
+        direction,
+        failure.distance_to_edge,
+        failure.gap_to_target);
     return false;
 }
 
@@ -615,26 +728,10 @@ runtime_diagnostics_t get_runtime_diagnostics() {
     return runtime_diagnostics;
 }
 
-void reset_pointer_acceleration_state() {
-    runtime_diagnostics.last_acceleration_delta_us = 0;
-    runtime_diagnostics.last_acceleration_rate_multiplier = 0;
-    runtime_diagnostics.last_acceleration_velocity = 0;
-    runtime_diagnostics.last_acceleration_adjusted_velocity = 0;
-}
-
-void get_runtime_placement_flags(uint8_t& placement_active, uint8_t& placement_anchor_pending) {
-    placement_active = 0;
-    placement_anchor_pending = 0;
-}
-
 void update_last_sent_movement_diagnostics(uint8_t report_index, uint8_t report_id) {
     if (report_id != REPORT_ID_MOUSE_RELATIVE) {
         runtime_diagnostics.last_sent_dx = 0;
         runtime_diagnostics.last_sent_dy = 0;
-        runtime_diagnostics.last_prediction_applied = 0;
-        runtime_diagnostics.last_cursor_placement_report = 0;
-        runtime_diagnostics.last_predicted_dx = 0;
-        runtime_diagnostics.last_predicted_dy = 0;
         return;
     }
 
@@ -643,10 +740,6 @@ void update_last_sent_movement_diagnostics(uint8_t report_index, uint8_t report_
     const uint8_t* report = outgoing_reports[report_index] + 2;
     runtime_diagnostics.last_sent_dx = clamp_diagnostic_axis(get_usage_value(report, report_id, our_usage_x));
     runtime_diagnostics.last_sent_dy = clamp_diagnostic_axis(get_usage_value(report, report_id, our_usage_y));
-    runtime_diagnostics.last_prediction_applied = 0;
-    runtime_diagnostics.last_cursor_placement_report = 0;
-    runtime_diagnostics.last_predicted_dx = 0;
-    runtime_diagnostics.last_predicted_dy = 0;
 }
 
 void get_sent_relative_axes(uint8_t report_index, int16_t& dx, int16_t& dy) {
@@ -737,8 +830,18 @@ void process_mapping(bool auto_repeat) {
         uint32_t layer = layer_usage >> 32;
         if (layer_state[layer]) {
             if ((prev_input_state[usage] == 0) && (input_state[usage] != 0)) {
-                adopt_screen_cursor_or_center((active_screen + 1) % NSCREENS);
-                runtime_diagnostics.screen_changes_predicted++;
+                int8_t source_screen = active_screen;
+                int8_t target_screen = (active_screen + 1) % NSCREENS;
+                adopt_screen_cursor_or_center(target_screen);
+                runtime_diagnostics.screen_changes++;
+                set_edge_push_diagnostics(
+                    EDGE_PUSH_MANUAL_SWITCH,
+                    source_screen,
+                    target_screen,
+                    EDGE_AXIS_NONE,
+                    0,
+                    -1,
+                    -1);
                 manual_screen_changed = true;
             }
         }
@@ -922,7 +1025,6 @@ void send_report() {
         return;
     }
 
-    runtime_diagnostics.last_cursor_placement_report = 0;
     int16_t sent_dx = 0;
     int16_t sent_dy = 0;
     if (report_id == REPORT_ID_MOUSE_RELATIVE) {

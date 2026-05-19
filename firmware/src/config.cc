@@ -23,15 +23,19 @@ ConfigCommand last_config_command = ConfigCommand::NO_COMMAND;
 RuntimeCommand last_runtime_command = RuntimeCommand::GET_STATUS;
 uint32_t requested_index = 0;
 uint8_t requested_runtime_page = 0;
-macos_mouse_config_t persistent_mouse_config = {
-    .tracking_speed = 45056,
-    .pointer_resolution = ADVERTISED_POINTER_RESOLUTION_FIXED,
-    .frame_rate = 4390912,
-    .fixed_multiplier = 65536,
-    .placement_tolerance = 32768,
-    .report_rate = 0,
+
+struct __attribute__((packed)) legacy_persist_config_t {
+    uint8_t version;
+    uint8_t flags;
+    uint32_t partial_scroll_timeout;
+    uint32_t mapping_count;
+    uint8_t interval_override;
+    ConstraintMode constraint_mode;
+    uint32_t offscreen_sensitivity;
+    uint32_t legacy_reserved_0;
+    uint8_t legacy_reserved_1[24];
+    screen_def_t screens[NSCREENS];
 };
-macos_mouse_config_t live_mouse_config = persistent_mouse_config;
 
 bool checksum_ok(const uint8_t* buffer, uint16_t data_size) {
     return crc32(buffer, data_size - 4) == ((crc32_t*) (buffer + data_size - 4))->crc32;
@@ -41,8 +45,16 @@ bool version_ok(const uint8_t* buffer) {
     return ((set_feature_t*) buffer)->version == CONFIG_VERSION;
 }
 
+bool stored_config_version_ok(uint8_t version) {
+    return version == CONFIG_VERSION || version == LEGACY_CONFIG_VERSION;
+}
+
+uint32_t max_persisted_mapping_count_for_header_size(uint32_t header_size) {
+    return (FLASH_SECTOR_SIZE - header_size - sizeof(crc32_t)) / sizeof(mapping_config_t);
+}
+
 uint32_t max_persisted_mapping_count() {
-    return (FLASH_SECTOR_SIZE - sizeof(persist_config_t) - sizeof(crc32_t)) / sizeof(mapping_config_t);
+    return max_persisted_mapping_count_for_header_size(sizeof(persist_config_t));
 }
 
 bool constraint_mode_ok(ConstraintMode mode) {
@@ -62,29 +74,9 @@ void set_interval_override_checked(uint8_t value) {
     }
 }
 
-void apply_mouse_config(const macos_mouse_config_t* config) {
-    live_mouse_config = *config;
-    if (live_mouse_config.pointer_resolution == 0) {
-        live_mouse_config.pointer_resolution = ADVERTISED_POINTER_RESOLUTION_FIXED;
-    }
-    if (live_mouse_config.frame_rate == 0) {
-        live_mouse_config.frame_rate = 4390912;
-    }
-    if (live_mouse_config.fixed_multiplier == 0) {
-        live_mouse_config.fixed_multiplier = 65536;
-    }
-    reset_pointer_acceleration_state();
-}
-
-void fill_mouse_config(macos_mouse_config_t* config) {
-    *config = live_mouse_config;
-}
-
 void fill_runtime_status(runtime_status_t* status) {
     memset(status, 0, sizeof(runtime_status_t));
     status->cursor = get_runtime_cursor();
-    get_runtime_placement_flags(status->placement_active, status->placement_anchor_pending);
-    fill_mouse_config(&status->mouse_config);
 }
 
 void fill_runtime_diagnostics(runtime_diagnostics_t* diagnostics) {
@@ -115,32 +107,58 @@ void fill_runtime_diagnostics_page(runtime_diagnostics_page_t* page) {
 }
 
 void load_config() {
-    if (checksum_ok(FLASH_CONFIG_IN_MEMORY, FLASH_SECTOR_SIZE) && version_ok(FLASH_CONFIG_IN_MEMORY)) {
-        persist_config_t* config = (persist_config_t*) FLASH_CONFIG_IN_MEMORY;
-        unmapped_passthrough = (config->flags & CONFIG_FLAG_UNMAPPED_PASSTHROUGH) != 0;
-        if (config->partial_scroll_timeout > 0) {
-            partial_scroll_timeout = config->partial_scroll_timeout;
-        }
-        set_interval_override_checked(config->interval_override);
-        if (constraint_mode_ok(config->constraint_mode)) {
-            constraint_mode = config->constraint_mode;
-        }
-        if (config->offscreen_sensitivity > 0) {
-            screens[-1].sensitivity = config->offscreen_sensitivity;
-        }
-        cursor_placement_interval_seconds = config->cursor_placement_interval_seconds;
-        persistent_mouse_config = config->mouse_config;
-        apply_mouse_config(&persistent_mouse_config);
-        fill_mouse_config(&persistent_mouse_config);
-        for (uint8_t i = 0; i < NSCREENS; i++) {
-            if (screen_ok(config->screens[i])) {
-                screens[i] = config->screens[i];
+    if (checksum_ok(FLASH_CONFIG_IN_MEMORY, FLASH_SECTOR_SIZE) &&
+        stored_config_version_ok(FLASH_CONFIG_IN_MEMORY[0])) {
+        uint32_t mapping_count = 0;
+        uint32_t header_size = 0;
+
+        config_mappings.clear();
+        if (FLASH_CONFIG_IN_MEMORY[0] == CONFIG_VERSION) {
+            const persist_config_t* config = (const persist_config_t*) FLASH_CONFIG_IN_MEMORY;
+            unmapped_passthrough = (config->flags & CONFIG_FLAG_UNMAPPED_PASSTHROUGH) != 0;
+            if (config->partial_scroll_timeout > 0) {
+                partial_scroll_timeout = config->partial_scroll_timeout;
             }
+            set_interval_override_checked(config->interval_override);
+            if (constraint_mode_ok(config->constraint_mode)) {
+                constraint_mode = config->constraint_mode;
+            }
+            if (config->offscreen_sensitivity > 0) {
+                screens[-1].sensitivity = config->offscreen_sensitivity;
+            }
+            for (uint8_t i = 0; i < NSCREENS; i++) {
+                if (screen_ok(config->screens[i])) {
+                    screens[i] = config->screens[i];
+                }
+            }
+            mapping_count = config->mapping_count;
+            header_size = sizeof(persist_config_t);
+        } else {
+            const legacy_persist_config_t* config = (const legacy_persist_config_t*) FLASH_CONFIG_IN_MEMORY;
+            unmapped_passthrough = (config->flags & CONFIG_FLAG_UNMAPPED_PASSTHROUGH) != 0;
+            if (config->partial_scroll_timeout > 0) {
+                partial_scroll_timeout = config->partial_scroll_timeout;
+            }
+            set_interval_override_checked(config->interval_override);
+            if (constraint_mode_ok(config->constraint_mode)) {
+                constraint_mode = config->constraint_mode;
+            }
+            if (config->offscreen_sensitivity > 0) {
+                screens[-1].sensitivity = config->offscreen_sensitivity;
+            }
+            for (uint8_t i = 0; i < NSCREENS; i++) {
+                if (screen_ok(config->screens[i])) {
+                    screens[i] = config->screens[i];
+                }
+            }
+            mapping_count = config->mapping_count;
+            header_size = sizeof(legacy_persist_config_t);
         }
-        mapping_config_t* buffer_mappings = (mapping_config_t*) (FLASH_CONFIG_IN_MEMORY + sizeof(persist_config_t));
-        uint32_t mapping_count = config->mapping_count;
-        if (mapping_count > max_persisted_mapping_count()) {
-            mapping_count = max_persisted_mapping_count();
+
+        mapping_config_t* buffer_mappings = (mapping_config_t*) (FLASH_CONFIG_IN_MEMORY + header_size);
+        uint32_t max_mapping_count = max_persisted_mapping_count_for_header_size(header_size);
+        if (mapping_count > max_mapping_count) {
+            mapping_count = max_mapping_count;
         }
         for (uint32_t i = 0; i < mapping_count; i++) {
             config_mappings.push_back(buffer_mappings[i]);
@@ -166,8 +184,6 @@ void fill_get_config(get_config_t* config) {
     config->interval_override = interval_override;
     config->constraint_mode = constraint_mode;
     config->offscreen_sensitivity = screens[-1].sensitivity;
-    config->cursor_placement_interval_seconds = cursor_placement_interval_seconds;
-    config->mouse_config = persistent_mouse_config;
 }
 
 void fill_persist_config(persist_config_t* config) {
@@ -181,8 +197,6 @@ void fill_persist_config(persist_config_t* config) {
     config->interval_override = interval_override;
     config->constraint_mode = constraint_mode;
     config->offscreen_sensitivity = screens[-1].sensitivity;
-    config->cursor_placement_interval_seconds = cursor_placement_interval_seconds;
-    config->mouse_config = persistent_mouse_config;
     for (uint8_t i = 0; i < NSCREENS; i++) {
         config->screens[i] = screens[i];
     }
@@ -264,9 +278,6 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
         runtime_get_feature_t* runtime_buffer = (runtime_get_feature_t*) buffer;
         memset(runtime_buffer, 0, sizeof(runtime_get_feature_t));
         switch (last_runtime_command) {
-            case RuntimeCommand::GET_MOUSE_CONFIG:
-                fill_mouse_config((macos_mouse_config_t*) runtime_buffer);
-                break;
             case RuntimeCommand::GET_DIAGNOSTICS:
                 fill_runtime_diagnostics_page((runtime_diagnostics_page_t*) runtime_buffer);
                 break;
@@ -306,10 +317,6 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                     set_interval_override_checked(config->interval_override);
                     constraint_mode = config->constraint_mode;
                     screens[-1].sensitivity = config->offscreen_sensitivity;
-                    cursor_placement_interval_seconds = config->cursor_placement_interval_seconds;
-                    persistent_mouse_config = config->mouse_config;
-                    apply_mouse_config(&persistent_mouse_config);
-                    fill_mouse_config(&persistent_mouse_config);
                     set_mapping_from_config();
                     break;
                 }
@@ -362,21 +369,17 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
             last_runtime_command = runtime_buffer->command;
             switch (runtime_buffer->command) {
                 case RuntimeCommand::SET_HOST_CURSOR: {
-                    runtime_cursor_t cursor;
-                    memcpy(&cursor, runtime_buffer->data, sizeof(cursor));
-                    cursor.active_screen = 0;
+                    runtime_host_cursor_t host_cursor;
+                    memcpy(&host_cursor, runtime_buffer->data, sizeof(host_cursor));
+                    runtime_cursor_t cursor = {
+                        .x = host_cursor.x,
+                        .y = host_cursor.y,
+                        .active_screen = 0,
+                    };
                     set_cursor_from_host(cursor);
                     last_runtime_command = RuntimeCommand::GET_STATUS;
                     break;
                 }
-                case RuntimeCommand::SET_MOUSE_CONFIG: {
-                    macos_mouse_config_t* mouse_config = (macos_mouse_config_t*) runtime_buffer->data;
-                    apply_mouse_config(mouse_config);
-                    last_runtime_command = RuntimeCommand::GET_STATUS;
-                    break;
-                }
-                case RuntimeCommand::GET_MOUSE_CONFIG:
-                    break;
                 case RuntimeCommand::GET_DIAGNOSTICS:
                     requested_runtime_page = runtime_buffer->data[0];
                     break;

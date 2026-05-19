@@ -101,60 +101,6 @@
                 <input type="number" id="offscreen_sensitivity_input" class="form-control" style="max-width: 100px;">
             </div>
         </div>
-        <div class="row mb-2">
-            <div class="col-auto">
-                <label for="cursor_placement_interval_input" class="col-form-label">Cursor placement refresh</label>
-            </div>
-            <div class="col-auto">
-                <div class="input-group">
-                    <input type="number" min="0" step="1" id="cursor_placement_interval_input" class="form-control" style="max-width: 100px;">
-                    <span class="input-group-text">s</span>
-                </div>
-            </div>
-        </div>
-
-        <h5 class="mt-4">Mouse acceleration</h5>
-        <div class="row mb-1">
-            <div class="col-4">
-                <label for="mouse_tracking_speed_input" class="col-form-label">Tracking speed</label>
-            </div>
-            <div class="col-4">
-                <input type="number" step="0.0001" id="mouse_tracking_speed_input" class="form-control">
-            </div>
-        </div>
-        <div class="row mb-1">
-            <div class="col-4">
-                <label for="mouse_pointer_resolution_input" class="col-form-label">Pointer resolution</label>
-            </div>
-            <div class="col-4">
-                <input type="number" step="0.1" id="mouse_pointer_resolution_input" class="form-control">
-            </div>
-        </div>
-        <div class="row mb-1">
-            <div class="col-4">
-                <label for="mouse_frame_rate_input" class="col-form-label">Frame rate</label>
-            </div>
-            <div class="col-4">
-                <input type="number" step="0.1" id="mouse_frame_rate_input" class="form-control">
-            </div>
-        </div>
-        <div class="row mb-1">
-            <div class="col-4">
-                <label for="mouse_fixed_multiplier_input" class="col-form-label">Fixed multiplier</label>
-            </div>
-            <div class="col-4">
-                <input type="number" step="0.0001" id="mouse_fixed_multiplier_input" class="form-control">
-            </div>
-        </div>
-        <div class="row mb-1">
-            <div class="col-4">
-                <label for="mouse_placement_tolerance_input" class="col-form-label">Placement tolerance</label>
-            </div>
-            <div class="col-4">
-                <input type="number" step="0.0001" id="mouse_placement_tolerance_input" class="form-control">
-            </div>
-        </div>
-
         <div class="container mt-3">
             <div class="row mb-1">
                 <div class="col-2"></div>
@@ -227,9 +173,6 @@
             <div class="col-auto">
                 <button id="load_runtime_status" type="button" class="btn btn-primary">Read runtime state</button>
             </div>
-            <div class="col-auto">
-                <button id="apply_runtime_mouse" type="button" class="btn btn-primary">Apply runtime mouse settings</button>
-            </div>
         </div>
         <div class="row mb-1">
             <div class="col-3">
@@ -246,12 +189,6 @@
             </div>
         </div>
         <div class="row mb-2">
-            <div class="col-3">
-                <label for="runtime_active_screen_input" class="col-form-label">Active screen</label>
-            </div>
-            <div class="col-3">
-                <input type="number" id="runtime_active_screen_input" class="form-control">
-            </div>
             <div class="col-auto">
                 <button id="apply_runtime_cursor" type="button" class="btn btn-primary">Send host cursor</button>
             </div>
@@ -311,9 +248,7 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    <div class="col mouse_usages">
-                    </div>
-                    <div class="col keyboard_usages mt-3">
+                    <div class="col keyboard_usages">
                     </div>
                     <div class="col media_usages mt-3">
                     </div>

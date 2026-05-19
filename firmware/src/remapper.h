@@ -16,8 +16,6 @@ void interval_override_updated();
 void screens_updated();
 runtime_cursor_t get_runtime_cursor();
 runtime_diagnostics_t get_runtime_diagnostics();
-void get_runtime_placement_flags(uint8_t& placement_active, uint8_t& placement_anchor_pending);
-void reset_pointer_acceleration_state();
 void set_cursor_from_host(const runtime_cursor_t& cursor);
 
 #endif

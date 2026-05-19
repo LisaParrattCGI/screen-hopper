@@ -1,7 +1,7 @@
 VENDOR_ID = 0xCAFE
 PRODUCT_ID = 0xBAF3
 
-CONFIG_VERSION = 8
+CONFIG_VERSION = 9
 CONFIG_SIZE = 60
 RUNTIME_SIZE = 60
 
@@ -16,7 +16,6 @@ RUNTIME_USAGE = 0x21
 UNMAPPED_PASSTHROUGH_FLAG = 0x01
 STICKY_FLAG = 0x01
 
-MOUSE_CONFIG_SCALE = 65536
 SCREEN_COORD_SCALE = 1000
 SCREEN_COUNT = 2
 
@@ -35,18 +34,7 @@ CONFIG_COMMAND_GET_SCREEN = 13
 
 RUNTIME_COMMAND_GET_STATUS = 1
 RUNTIME_COMMAND_SET_HOST_CURSOR = 2
-RUNTIME_COMMAND_SET_MOUSE_CONFIG = 3
-RUNTIME_COMMAND_GET_MOUSE_CONFIG = 4
-RUNTIME_COMMAND_GET_DIAGNOSTICS = 5
-
-DEFAULT_MOUSE_CONFIG = {
-    "tracking_speed": 0.6875,
-    "pointer_resolution": 400.0,
-    "frame_rate": 67.0,
-    "fixed_multiplier": 1.0,
-    "placement_tolerance": 0.5,
-    "report_rate": 0.0,
-}
+RUNTIME_COMMAND_GET_DIAGNOSTICS = 3
 
 
 def read_feature_payload(device, report_id, report_size, report_name):

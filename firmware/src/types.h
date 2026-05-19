@@ -6,7 +6,8 @@
 #define SCREEN_HOPPER_VENDOR_ID 0xCAFE
 #define SCREEN_HOPPER_PRODUCT_ID 0xBAF3
 
-#define CONFIG_VERSION 8
+#define CONFIG_VERSION 9
+#define LEGACY_CONFIG_VERSION 8
 #define CONFIG_SIZE 60
 #define RUNTIME_SIZE 60
 
@@ -53,9 +54,7 @@ enum class RuntimeCommand : int8_t {
     NO_COMMAND = 0,
     GET_STATUS = 1,
     SET_HOST_CURSOR = 2,
-    SET_MOUSE_CONFIG = 3,
-    GET_MOUSE_CONFIG = 4,
-    GET_DIAGNOSTICS = 5,
+    GET_DIAGNOSTICS = 3,
 };
 
 struct usage_def_t {
@@ -116,15 +115,6 @@ struct __attribute__((packed)) screen_def_t {
     uint32_t sensitivity;
 };
 
-struct __attribute__((packed)) macos_mouse_config_t {
-    uint32_t tracking_speed;
-    uint32_t pointer_resolution;
-    uint32_t frame_rate;
-    uint32_t fixed_multiplier;
-    uint32_t placement_tolerance;
-    uint32_t report_rate;
-};
-
 struct __attribute__((packed)) persist_config_t {
     uint8_t version;
     uint8_t flags;
@@ -133,8 +123,6 @@ struct __attribute__((packed)) persist_config_t {
     uint8_t interval_override;
     ConstraintMode constraint_mode;
     uint32_t offscreen_sensitivity;
-    uint32_t cursor_placement_interval_seconds;
-    macos_mouse_config_t mouse_config;
     screen_def_t screens[NSCREENS];
 };
 
@@ -148,8 +136,6 @@ struct __attribute__((packed)) get_config_t {
     uint8_t interval_override;
     ConstraintMode constraint_mode;
     uint32_t offscreen_sensitivity;
-    uint32_t cursor_placement_interval_seconds;
-    macos_mouse_config_t mouse_config;
 };
 
 struct __attribute__((packed)) set_config_t {
@@ -158,8 +144,6 @@ struct __attribute__((packed)) set_config_t {
     uint8_t interval_override;
     ConstraintMode constraint_mode;
     uint32_t offscreen_sensitivity;
-    uint32_t cursor_placement_interval_seconds;
-    macos_mouse_config_t mouse_config;
 };
 
 struct __attribute__((packed)) get_indexed_t {
@@ -196,6 +180,11 @@ struct __attribute__((packed)) runtime_get_feature_t {
 #define RUNTIME_GET_PAYLOAD_SIZE (RUNTIME_SIZE - 4)
 #define RUNTIME_DIAGNOSTICS_PAGE_DATA_SIZE (RUNTIME_GET_PAYLOAD_SIZE - 4)
 
+struct __attribute__((packed)) runtime_host_cursor_t {
+    int64_t x;
+    int64_t y;
+};
+
 struct __attribute__((packed)) runtime_cursor_t {
     int64_t x;
     int64_t y;
@@ -204,9 +193,6 @@ struct __attribute__((packed)) runtime_cursor_t {
 
 struct __attribute__((packed)) runtime_status_t {
     runtime_cursor_t cursor;
-    uint8_t placement_active;
-    uint8_t placement_anchor_pending;
-    macos_mouse_config_t mouse_config;
 };
 
 struct __attribute__((packed)) runtime_diagnostics_page_request_t {
@@ -226,8 +212,6 @@ struct __attribute__((packed)) runtime_diagnostics_t {
     int32_t last_host_correction_y;
     int16_t last_raw_dx;
     int16_t last_raw_dy;
-    int32_t last_predicted_dx;
-    int32_t last_predicted_dy;
     uint32_t movement_reports_queued;
     uint32_t movement_reports_sent;
     uint16_t host_reports_accepted;
@@ -238,24 +222,25 @@ struct __attribute__((packed)) runtime_diagnostics_t {
     uint8_t last_report_id;
     int16_t last_sent_dx;
     int16_t last_sent_dy;
-    uint8_t last_prediction_applied;
-    uint8_t last_cursor_placement_report;
-    uint32_t prediction_reports_applied;
-    uint32_t placement_reports_delivered;
     uint32_t transmit_failures;
-    uint32_t screen_changes_predicted;
+    uint32_t screen_changes;
     int64_t total_raw_dx;
     int64_t total_raw_dy;
     int64_t total_sent_dx;
     int64_t total_sent_dy;
-    int64_t total_predicted_dx;
-    int64_t total_predicted_dy;
     int64_t total_host_correction_x;
     int64_t total_host_correction_y;
-    uint32_t last_acceleration_delta_us;
-    uint32_t last_acceleration_rate_multiplier;
-    uint32_t last_acceleration_velocity;
-    uint32_t last_acceleration_adjusted_velocity;
+    uint8_t edge_push_state;
+    int8_t edge_push_source_screen;
+    int8_t edge_push_target_screen;
+    int8_t edge_push_axis;
+    int8_t edge_push_direction;
+    uint32_t edge_push_host_age_ms;
+    int32_t edge_push_margin;
+    int32_t edge_push_distance_to_edge;
+    int32_t edge_push_gap_to_target;
+    uint32_t edge_push_attempts;
+    uint32_t edge_push_switches;
 };
 
 static_assert(sizeof(runtime_status_t) <= RUNTIME_GET_PAYLOAD_SIZE, "runtime status must fit in one feature report");

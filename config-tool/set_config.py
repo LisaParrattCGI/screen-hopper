@@ -16,21 +16,12 @@ from hid_protocol import (
     CONFIG_COMMAND_SUSPEND as SUSPEND,
     CONFIG_SIZE,
     CONFIG_VERSION,
-    DEFAULT_MOUSE_CONFIG,
-    MOUSE_CONFIG_SCALE,
-    PRODUCT_ID,
     REPORT_ID_CONFIG,
     SCREEN_COORD_SCALE,
     STICKY_FLAG,
     UNMAPPED_PASSTHROUGH_FLAG,
-    VENDOR_ID,
     open_config_device,
 )
-
-
-def fixed16(value):
-    value = round(float(value) * MOUSE_CONFIG_SCALE)
-    return max(0, min(0xFFFFFFFF, value))
 
 
 def screen_coord(value):
@@ -41,19 +32,6 @@ def screen_coord(value):
     else:
         scaled = round(numeric * SCREEN_COORD_SCALE)
     return max(0, min(0xFFFFFFFF, scaled))
-
-
-def mouse_config_payload(config):
-    mouse_config = {**DEFAULT_MOUSE_CONFIG, **(config.get("mouse", {}) or {})}
-    return struct.pack(
-        "<6L",
-        fixed16(mouse_config["tracking_speed"]),
-        fixed16(mouse_config["pointer_resolution"]),
-        fixed16(mouse_config["frame_rate"]),
-        fixed16(mouse_config["fixed_multiplier"]),
-        fixed16(mouse_config["placement_tolerance"]),
-        fixed16(mouse_config["report_rate"]),
-    )
 
 
 def feature_report(command, payload=b""):
@@ -79,7 +57,6 @@ unmapped_passthrough = config.get("unmapped_passthrough", True)
 interval_override = config.get("interval_override", 0)
 constraint_mode = config.get("constraint_mode", 0)
 offscreen_sensitivity = config.get("offscreen_sensitivity", 1000)
-cursor_placement_interval_seconds = config.get("cursor_placement_interval_seconds", 0)
 
 flags = UNMAPPED_PASSTHROUGH_FLAG if unmapped_passthrough else 0
 
@@ -87,15 +64,13 @@ send_command(
     device,
     SET_CONFIG,
     struct.pack(
-        "<BLBBLL",
+        "<BLBBL",
         flags,
         partial_scroll_timeout,
         interval_override,
         constraint_mode,
         offscreen_sensitivity,
-        cursor_placement_interval_seconds,
-    )
-    + mouse_config_payload(config),
+    ),
 )
 
 send_command(device, CLEAR_MAPPING)

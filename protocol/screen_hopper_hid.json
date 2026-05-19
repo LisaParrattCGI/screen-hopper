@@ -3,7 +3,8 @@
     "vendor_id": "0xCAFE",
     "product_id": "0xBAF3"
   },
-  "config_version": 8,
+  "config_version": 9,
+  "legacy_config_versions_read_from_flash": [8],
   "report_sizes": {
     "config": 60,
     "runtime": 60
@@ -34,7 +35,7 @@
   "action_usages": {
     "switch_screen": "0xFFF20001"
   },
-  "mouse_config_scale": 65536,
+  "screen_coordinate_scale": 1000,
   "screen_count": 2,
   "config_commands": {
     "no_command": 0,
@@ -56,9 +57,7 @@
     "no_command": 0,
     "get_status": 1,
     "set_host_cursor": 2,
-    "set_mouse_config": 3,
-    "get_mouse_config": 4,
-    "get_diagnostics": 5
+    "get_diagnostics": 3
   },
   "payloads": {
     "set_feature_header": [
@@ -75,24 +74,20 @@
       ["their_usage_count", "uint32_le"],
       ["interval_override", "uint8"],
       ["constraint_mode", "uint8"],
-      ["offscreen_sensitivity", "uint32_le"],
-      ["cursor_placement_interval_seconds", "uint32_le"],
-      ["mouse_config", "6 * fixed16 uint32_le: tracking_speed, pointer_resolution, frame_rate, fixed_multiplier, placement_tolerance, report_rate"]
+      ["offscreen_sensitivity", "uint32_le"]
     ],
     "set_config": [
       ["flags", "uint8"],
       ["partial_scroll_timeout", "uint32_le"],
       ["interval_override", "uint8"],
       ["constraint_mode", "uint8"],
-      ["offscreen_sensitivity", "uint32_le"],
-      ["cursor_placement_interval_seconds", "uint32_le"],
-      ["mouse_config", "6 * fixed16 uint32_le: tracking_speed, pointer_resolution, frame_rate, fixed_multiplier, placement_tolerance, report_rate"]
+      ["offscreen_sensitivity", "uint32_le"]
     ],
     "screen": [
-      ["x", "uint32_le screen coordinate, 1000 units per host desktop coordinate unit"],
-      ["y", "uint32_le screen coordinate, 1000 units per host desktop coordinate unit"],
-      ["width", "uint32_le screen coordinate, 1000 units per host desktop coordinate unit"],
-      ["height", "uint32_le screen coordinate, 1000 units per host desktop coordinate unit"],
+      ["x", "uint32_le configured global coordinate, 1000 units per host desktop coordinate unit"],
+      ["y", "uint32_le configured global coordinate, 1000 units per host desktop coordinate unit"],
+      ["width", "uint32_le configured global width"],
+      ["height", "uint32_le configured global height"],
       ["sensitivity", "uint32_le"]
     ],
     "set_screen": [
@@ -106,16 +101,20 @@
       ["layer", "uint8"],
       ["flags", "uint8"]
     ],
+    "runtime_host_cursor": [
+      ["x", "int64_le local coordinate in the receiving host's composite desktop"],
+      ["y", "int64_le local coordinate in the receiving host's composite desktop"]
+    ],
     "runtime_cursor": [
-      ["x", "int64_le screen coordinate, 1000 units per host desktop coordinate unit"],
-      ["y", "int64_le screen coordinate, 1000 units per host desktop coordinate unit"],
-      ["active_screen", "int8; runtime status reports the active screen, set_host_cursor treats this byte as reserved and stamps the source screen at the receiver"]
+      ["x", "int64_le configured global coordinate"],
+      ["y", "int64_le configured global coordinate"],
+      ["active_screen", "int8"]
+    ],
+    "set_host_cursor": [
+      ["cursor", "runtime_host_cursor; receiver stamps the source screen and translates local + screen origin into configured global space"]
     ],
     "runtime_status": [
-      ["cursor", "runtime_cursor"],
-      ["placement_active", "uint8"],
-      ["placement_anchor_pending", "uint8"],
-      ["mouse_config", "6 * fixed16 uint32_le: tracking_speed, pointer_resolution, frame_rate, fixed_multiplier, placement_tolerance, report_rate"]
+      ["cursor", "runtime_cursor"]
     ],
     "runtime_get_diagnostics_request": [
       ["page", "uint8, zero-based diagnostics page index"]
@@ -128,12 +127,10 @@
     ],
     "runtime_diagnostics": [
       ["last_host_cursor", "runtime_cursor"],
-      ["last_host_correction_x", "int32_le screen coordinate delta"],
-      ["last_host_correction_y", "int32_le screen coordinate delta"],
+      ["last_host_correction_x", "int32_le configured global coordinate delta"],
+      ["last_host_correction_y", "int32_le configured global coordinate delta"],
       ["last_raw_dx", "int16_le"],
       ["last_raw_dy", "int16_le"],
-      ["last_predicted_dx", "int32_le screen coordinate delta"],
-      ["last_predicted_dy", "int32_le screen coordinate delta"],
       ["movement_reports_queued", "uint32_le"],
       ["movement_reports_sent", "uint32_le"],
       ["host_reports_accepted", "uint16_le"],
@@ -144,24 +141,25 @@
       ["last_report_id", "uint8"],
       ["last_sent_dx", "int16_le"],
       ["last_sent_dy", "int16_le"],
-      ["last_prediction_applied", "uint8 boolean"],
-      ["last_cursor_placement_report", "uint8 boolean"],
-      ["prediction_reports_applied", "uint32_le"],
-      ["placement_reports_delivered", "uint32_le"],
       ["transmit_failures", "uint32_le"],
-      ["screen_changes_predicted", "uint32_le"],
+      ["screen_changes", "uint32_le"],
       ["total_raw_dx", "int64_le HID counts"],
       ["total_raw_dy", "int64_le HID counts"],
       ["total_sent_dx", "int64_le HID counts"],
       ["total_sent_dy", "int64_le HID counts"],
-      ["total_predicted_dx", "int64_le screen coordinate delta"],
-      ["total_predicted_dy", "int64_le screen coordinate delta"],
-      ["total_host_correction_x", "int64_le screen coordinate delta"],
-      ["total_host_correction_y", "int64_le screen coordinate delta"],
-      ["last_acceleration_delta_us", "uint32_le, microseconds since previous predicted movement report for the same target screen"],
-      ["last_acceleration_rate_multiplier", "fixed16 uint32_le, IOHID pointer report-rate timing multiplier"],
-      ["last_acceleration_velocity", "fixed16 uint32_le, floor(hypot(sent_dx, sent_dy)) before timing/fixed multiplier"],
-      ["last_acceleration_adjusted_velocity", "fixed16 uint32_le, velocity actually passed into the acceleration curve"]
+      ["total_host_correction_x", "int64_le configured global coordinate delta"],
+      ["total_host_correction_y", "int64_le configured global coordinate delta"],
+      ["edge_push_state", "uint8: 0 idle, 1 no active screen, 2 no movement, 3 no host cursor, 4 stale host cursor, 5 not at edge, 6 no target, 7 switched, 8 manual switch"],
+      ["edge_push_source_screen", "int8"],
+      ["edge_push_target_screen", "int8"],
+      ["edge_push_axis", "int8: 0 none, 1 x, 2 y"],
+      ["edge_push_direction", "int8: -1 negative, 0 none, 1 positive"],
+      ["edge_push_host_age_ms", "uint32_le"],
+      ["edge_push_margin", "int32_le configured global coordinate delta"],
+      ["edge_push_distance_to_edge", "int32_le configured global coordinate delta, -1 when not applicable"],
+      ["edge_push_gap_to_target", "int32_le configured global coordinate delta, -1 when not applicable"],
+      ["edge_push_attempts", "uint32_le"],
+      ["edge_push_switches", "uint32_le"]
     ]
   }
 }

@@ -18,7 +18,6 @@ volatile bool suspended = false;
 
 bool unmapped_passthrough = true;
 uint32_t partial_scroll_timeout = 1000000;
-uint32_t cursor_placement_interval_seconds = 0;
 std::vector<mapping_config_t> config_mappings;
 
 uint8_t resolution_multiplier = 0;

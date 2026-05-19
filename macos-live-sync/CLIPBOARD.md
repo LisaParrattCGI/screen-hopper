@@ -28,7 +28,7 @@ sync.
 
 ## Transport
 
-The current runtime report is sized for cursor and mouse-model state, not bulk
+The current runtime report is sized for cursor/status diagnostics, not bulk
 data. A clipboard implementation should add separate runtime commands for:
 
 - announcing clipboard metadata
@@ -36,6 +36,6 @@ data. A clipboard implementation should add separate runtime commands for:
 - acknowledging or rejecting a sequence
 - clearing pending clipboard transfer state
 
-The forwarder back-channel added for runtime cursor and mouse config is the
-right physical path for this later, but the protocol should be extended
+The forwarder back-channel used for runtime cursor reports is the right
+physical path for this later, but the protocol should be extended
 deliberately rather than overloading cursor reports.
