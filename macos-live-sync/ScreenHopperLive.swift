@@ -546,6 +546,7 @@ private final class DeviceLocator {
 
         var lines = ["screen_hopper_hid_collections:"]
         for (index, device) in devices.enumerated() {
+            let descriptor = reportDescriptorData(device)
             lines.append(
                 [
                     "  [\(index)]",
@@ -560,9 +561,11 @@ private final class DeviceLocator {
                     "max_input=\(intString(device, kIOHIDMaxInputReportSizeKey as CFString))",
                     "max_output=\(intString(device, kIOHIDMaxOutputReportSizeKey as CFString))",
                     "max_feature=\(intString(device, "MaxFeatureReportSize" as CFString))",
+                    "report_descriptor=\(descriptorSummary(descriptor))",
                     "runtime_candidate=\(isRuntimeCollection(device) ? "yes" : "no")",
                 ].joined(separator: " ")
             )
+            lines.append(contentsOf: elementSummary(device).map { "    \($0)" })
         }
         return lines.joined(separator: "\n")
     }
@@ -597,6 +600,135 @@ private final class DeviceLocator {
 
     private func intString(_ device: IOHIDDevice, _ key: CFString) -> String {
         intProperty(device, key).map(String.init) ?? "unknown"
+    }
+
+    private func reportDescriptorData(_ device: IOHIDDevice) -> Data? {
+        if let data = IOHIDDeviceGetProperty(device, "ReportDescriptor" as CFString) as? Data {
+            return data
+        }
+        if let data = IOHIDDeviceGetProperty(device, "HIDReportDescriptor" as CFString) as? Data {
+            return data
+        }
+        return nil
+    }
+
+    private func descriptorSummary(_ data: Data?) -> String {
+        guard let data else {
+            return "unknown"
+        }
+        return "len=\(data.count) crc32=\(String(format: "0x%08X", CRC32.compute(data)))"
+    }
+
+    private func elementSummary(_ device: IOHIDDevice) -> [String] {
+        guard let elements = IOHIDDeviceCopyMatchingElements(device, nil, IOOptionBits(kIOHIDOptionsTypeNone)) as? [IOHIDElement] else {
+            return ["elements: unavailable"]
+        }
+
+        let sortedElements = elements.sorted { left, right in
+            let leftKey = elementSortKey(left)
+            let rightKey = elementSortKey(right)
+            return leftKey.lexicographicallyPrecedes(rightKey)
+        }
+
+        var lines: [String] = [
+            "elements: count=\(sortedElements.count)",
+        ]
+
+        let reportGroups = Dictionary(grouping: sortedElements) { element in
+            "\(reportTypeString(reportType(for: element))) id=\(IOHIDElementGetReportID(element))"
+        }
+        for key in reportGroups.keys.sorted() {
+            let group = reportGroups[key] ?? []
+            let bits = group.reduce(0) { total, element in
+                total + IOHIDElementGetReportSize(element) * IOHIDElementGetReportCount(element)
+            }
+            let bytes = (bits + 7) / 8
+            lines.append("report \(key) elements=\(group.count) bits=\(bits) bytes=\(bytes)")
+        }
+
+        for element in sortedElements {
+            let reportID = IOHIDElementGetReportID(element)
+            let reportType = reportType(for: element)
+            let usagePage = IOHIDElementGetUsagePage(element)
+            let usage = IOHIDElementGetUsage(element)
+            if reportType == kIOHIDReportTypeFeature ||
+                reportID == UInt32(runtimeReportID) ||
+                reportID == UInt32(configReportID) ||
+                usagePage == runtimeUsagePage ||
+                usagePage == configUsagePage {
+                lines.append(
+                    [
+                        "element",
+                        "type=\(elementTypeString(IOHIDElementGetType(element)))",
+                        "report=\(reportTypeString(reportType))",
+                        "id=\(reportID)",
+                        "usage_page=\(hex(Int(usagePage)))",
+                        "usage=\(hex(Int(usage)))",
+                        "size_bits=\(IOHIDElementGetReportSize(element))",
+                        "count=\(IOHIDElementGetReportCount(element))",
+                        "logical_min=\(IOHIDElementGetLogicalMin(element))",
+                        "logical_max=\(IOHIDElementGetLogicalMax(element))",
+                    ].joined(separator: " ")
+                )
+            }
+        }
+
+        return lines
+    }
+
+    private func elementSortKey(_ element: IOHIDElement) -> [Int] {
+        [
+            Int(reportType(for: element).rawValue),
+            Int(IOHIDElementGetReportID(element)),
+            Int(IOHIDElementGetUsagePage(element)),
+            Int(IOHIDElementGetUsage(element)),
+            Int(IOHIDElementGetType(element).rawValue),
+        ]
+    }
+
+    private func reportType(for element: IOHIDElement) -> IOHIDReportType {
+        switch IOHIDElementGetType(element) {
+        case kIOHIDElementTypeOutput:
+            return kIOHIDReportTypeOutput
+        case kIOHIDElementTypeFeature:
+            return kIOHIDReportTypeFeature
+        default:
+            return kIOHIDReportTypeInput
+        }
+    }
+
+    private func reportTypeString(_ type: IOHIDReportType) -> String {
+        switch type {
+        case kIOHIDReportTypeInput:
+            return "input"
+        case kIOHIDReportTypeOutput:
+            return "output"
+        case kIOHIDReportTypeFeature:
+            return "feature"
+        default:
+            return "report-\(type.rawValue)"
+        }
+    }
+
+    private func elementTypeString(_ type: IOHIDElementType) -> String {
+        switch type {
+        case kIOHIDElementTypeInput_Misc:
+            return "input-misc"
+        case kIOHIDElementTypeInput_Button:
+            return "input-button"
+        case kIOHIDElementTypeInput_Axis:
+            return "input-axis"
+        case kIOHIDElementTypeInput_ScanCodes:
+            return "input-scancodes"
+        case kIOHIDElementTypeOutput:
+            return "output"
+        case kIOHIDElementTypeFeature:
+            return "feature"
+        case kIOHIDElementTypeCollection:
+            return "collection"
+        default:
+            return "element-\(type.rawValue)"
+        }
     }
 }
 
