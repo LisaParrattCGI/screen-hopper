@@ -776,6 +776,13 @@ private final class DeviceLocator {
                     "pointer_resolution=\(numericString(fixed16OrPlainProperty(device, "HIDPointerResolution")))",
                     "pointer_acceleration_multiplier=\(numericString(fixed16OrPlainProperty(device, "HIDPointerAccelerationMultiplier")))",
                     "pointer_report_rate=\(numericString(numericProperty(device, "HIDPointerReportRate")))",
+                    "pointer_acceleration_algorithm=\(propertySummaryString(device, "HIDPointerAccelerationAlgorithm"))",
+                    "pointer_acceleration_type=\(propertySummaryString(device, "HIDPointerAccelerationType"))",
+                    "pointer_acceleration_table=\(propertySummaryString(device, "HIDPointerAccelerationTable"))",
+                    "pointer_accel_curves=\(propertySummaryString(device, "HIDAccelCurves"))",
+                    "user_pointer_accel_curves=\(propertySummaryString(device, "HIDUserPointerAccelCurves"))",
+                    "linear_mouse_acceleration=\(propertySummaryString(device, "HIDUseLinearScalingMouseAcceleration"))",
+                    "supports_pointer_acceleration=\(propertySummaryString(device, "HIDSupportsPointerAcceleration"))",
                     "report_descriptor=\(descriptorSummary(descriptor))",
                     "runtime_candidate=\(isRuntimeCollection(device) ? "yes" : "no")",
                 ].joined(separator: " ")
@@ -846,6 +853,75 @@ private final class DeviceLocator {
         value.map { $0 as Any } ?? NSNull()
     }
 
+    private func propertySummaryJSON(_ device: IOHIDDevice, _ key: String) -> [String: Any] {
+        guard let value = IOHIDDeviceGetProperty(device, key as CFString) else {
+            return ["available": false]
+        }
+        if let number = value as? NSNumber {
+            return [
+                "available": true,
+                "type": "number",
+                "int": number.int64Value,
+                "double": number.doubleValue,
+            ]
+        }
+        if let string = value as? String {
+            return [
+                "available": true,
+                "type": "string",
+                "value": string,
+            ]
+        }
+        if let data = value as? Data {
+            return [
+                "available": true,
+                "type": "data",
+                "length": data.count,
+                "crc32": Int(CRC32.compute(data)),
+            ]
+        }
+        if let array = value as? NSArray {
+            return [
+                "available": true,
+                "type": "array",
+                "count": array.count,
+            ]
+        }
+        if let dictionary = value as? NSDictionary {
+            return [
+                "available": true,
+                "type": "dictionary",
+                "count": dictionary.count,
+            ]
+        }
+        return [
+            "available": true,
+            "type": String(describing: type(of: value)),
+        ]
+    }
+
+    private func propertySummaryString(_ device: IOHIDDevice, _ key: String) -> String {
+        guard let value = IOHIDDeviceGetProperty(device, key as CFString) else {
+            return "none"
+        }
+        if let number = value as? NSNumber {
+            return "number:\(number)"
+        }
+        if let string = value as? String {
+            return "string:\(string)"
+        }
+        if let data = value as? Data {
+            return "data:len=\(data.count),crc32=\(hex(Int(CRC32.compute(data))))"
+        }
+        if let array = value as? NSArray {
+            return "array:count=\(array.count)"
+        }
+        if let dictionary = value as? NSDictionary {
+            return "dictionary:count=\(dictionary.count)"
+        }
+        return String(describing: type(of: value))
+    }
+
     private func pointerPropertiesJSON(_ device: IOHIDDevice) -> [String: Any] {
         [
             "resolution_raw": jsonNumber(numericProperty(device, "HIDPointerResolution")),
@@ -853,6 +929,13 @@ private final class DeviceLocator {
             "acceleration_multiplier_raw": jsonNumber(numericProperty(device, "HIDPointerAccelerationMultiplier")),
             "acceleration_multiplier": jsonNumber(fixed16OrPlainProperty(device, "HIDPointerAccelerationMultiplier")),
             "report_rate": jsonNumber(numericProperty(device, "HIDPointerReportRate")),
+            "acceleration_algorithm": propertySummaryJSON(device, "HIDPointerAccelerationAlgorithm"),
+            "acceleration_type": propertySummaryJSON(device, "HIDPointerAccelerationType"),
+            "acceleration_table": propertySummaryJSON(device, "HIDPointerAccelerationTable"),
+            "accel_curves": propertySummaryJSON(device, "HIDAccelCurves"),
+            "user_accel_curves": propertySummaryJSON(device, "HIDUserPointerAccelCurves"),
+            "linear_mouse_acceleration": propertySummaryJSON(device, "HIDUseLinearScalingMouseAcceleration"),
+            "supports_acceleration": propertySummaryJSON(device, "HIDSupportsPointerAcceleration"),
         ]
     }
 

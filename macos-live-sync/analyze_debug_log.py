@@ -215,6 +215,16 @@ def likely_axis_clamped(row, axis, bound_name):
     if not all(finite(value) for value in [position, delta, predicted, sent]):
         return False
 
+    previous = position - delta
+    if position <= EDGE_EPSILON:
+        if previous + predicted < -EDGE_EPSILON or previous + sent < -EDGE_EPSILON:
+            return True
+
+    bound = host.get(bound_name)
+    if finite(bound) and bound > 0 and position >= bound - EDGE_EPSILON:
+        if previous + predicted > bound + EDGE_EPSILON or previous + sent > bound + EDGE_EPSILON:
+            return True
+
     blocked = abs(delta) <= max(EDGE_DELTA_EPSILON, abs(predicted) * 0.35)
     if not blocked:
         return False
@@ -222,7 +232,6 @@ def likely_axis_clamped(row, axis, bound_name):
     if position <= EDGE_EPSILON and (predicted < -EDGE_DELTA_EPSILON or sent < -EDGE_DELTA_EPSILON):
         return True
 
-    bound = host.get(bound_name)
     if finite(bound) and bound > 0:
         if position >= bound - EDGE_EPSILON and (predicted > EDGE_DELTA_EPSILON or sent > EDGE_DELTA_EPSILON):
             return True
@@ -294,6 +303,7 @@ def collect_interval_metrics(rows):
                 "row": row,
                 "host_edge_clamped": likely_host_edge_clamped(row),
                 "single_report": single_report,
+                "movement_sent": interval.get("movement_sent", 0),
                 "sent_mag": sent_mag,
                 "host_mag": magnitude(host_dx, host_dy),
                 "prediction_mag": magnitude(predicted_dx, predicted_dy),
@@ -416,6 +426,49 @@ def print_model_verdict(metrics):
         print("model_verdict=model shape broadly plausible; remaining error likely timing, correction cadence, or small-sample quantization")
 
 
+def print_multi_report_verdict(metrics):
+    multi = [
+        metric
+        for metric in metrics
+        if not metric["single_report"]
+        and not metric["host_edge_clamped"]
+        and metric["sent_mag"] > 0
+        and finite(metric["gain_ratio"])
+    ]
+    print(f"multi_report_model_intervals={len(multi)}")
+    if len(multi) < 10:
+        return
+
+    ratios = [metric["gain_ratio"] for metric in multi]
+    normal_residuals = [metric["residual_mag"] for metric in multi]
+    coalesced_residuals = [metric["coalesced_residual_mag"] for metric in multi]
+    report_counts = [metric["movement_sent"] for metric in multi]
+    average_report_magnitudes = [
+        metric["sent_mag"] / metric["movement_sent"]
+        for metric in multi
+        if metric["movement_sent"] > 0
+    ]
+    print(
+        "multi_obs_model_gain_ratio: "
+        f"median={statistics.median(ratios):.3f} "
+        f"p10={percentile(ratios, 0.10):.3f} "
+        f"p90={percentile(ratios, 0.90):.3f}"
+    )
+    print(
+        "multi_report_shape: "
+        f"reports_med={statistics.median(report_counts):.1f} "
+        f"avg_sent_per_report_med={statistics.median(average_report_magnitudes):.3f} "
+        f"per_report_residual_med={statistics.median(normal_residuals):.3f} "
+        f"coalesced_residual_med={statistics.median(coalesced_residuals):.3f}"
+    )
+    if statistics.median(coalesced_residuals) > statistics.median(normal_residuals) * 2.0 and statistics.median(ratios) > 1.15:
+        print("multi_report_verdict=per-report model underpredicts medium-speed movement; full-interval coalescing is too strong, so suspect curve source/tracking normalization or partial event grouping")
+    elif statistics.median(coalesced_residuals) < statistics.median(normal_residuals) * 0.65:
+        print("multi_report_verdict=host movement is closer to grouped/coalesced acceleration than per-report acceleration")
+    else:
+        print("multi_report_verdict=multi-report movement broadly matches per-report prediction")
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit(f"usage: {Path(sys.argv[0]).name} LOG.jsonl")
@@ -527,6 +580,7 @@ def main():
     describe("clean_acceleration_velocity", [metric["acceleration_velocity"] for metric in clean])
     describe("clean_acceleration_adjusted_velocity", [metric["acceleration_adjusted_velocity"] for metric in clean])
     print_model_verdict(metrics)
+    print_multi_report_verdict(metrics)
     print_gain_table(metrics)
 
     print("largest residuals:")
